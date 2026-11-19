@@ -59,68 +59,64 @@ class Tensor:
 
 ## 一张真实的图
 
-下面这张计算图由页面脚本实时生成，对应 `examples/demo.py` 的两层 MLP 损失。**蓝框是叶子**（参数与数据，`op=None`），**紫框是算子节点**（记录 `inputs` 与 `op`）。点击按钮观察两种遍历——*前向*按调用顺序建图（节点依次弹出），*反向*从 $L$ 出发逆序回流（这正是本章反向引擎的执行过程）：
+下面这张计算图由页面脚本实时生成，对应 `examples/demo.py` 的两层 MLP 损失。**蓝框是叶子**（参数与数据，`op=None`），**紫框是算子节点**（记录 `inputs` 与输出形状）。*前向*按调用顺序建图（琥珀色光环游走），*反向*从 $L$ 出发逆序回流（绿色，即本章反向引擎的执行过程，梯度到达叶子时弹出标记）：
 
 <div class="comp-graph" id="mlp-graph">
 <style>
 .comp-graph { margin: 1.2em 0; overflow-x: auto; }
-.comp-graph .cg-wrap { position: relative; width: 860px; height: 250px; background: var(--ia-bg);
-  border: 1px solid var(--ia-border); border-radius: 10px; }
+.comp-graph .cg-wrap { position: relative; width: 880px; height: 264px; background-color: #faf9f6; background-image: radial-gradient(circle at 1px 1px, #e7e3da 1px, transparent 0); background-size: 26px 26px; border: 1px solid #ddd8ce; border-radius: 10px; }
 .comp-graph .cg-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.cg-node { position: absolute; background: #fff; border: 1.5px solid var(--cg-op, #7c66c9);
-  border-radius: 8px; padding: 4px 8px 5px; min-width: 74px; text-align: center;
-  box-shadow: 0 1px 4px rgba(36,41,47,.09); transition: box-shadow .25s, border-color .25s; }
-.cg-node.leaf { border-color: var(--cg-leaf, #3a4aa8); }
+.cg-node { position: absolute; background: #fff; border: 1.5px solid #8250df; border-radius: 9px; padding: 6px 9px; min-width: 92px; text-align: center; white-space: nowrap; box-shadow: 0 1px 5px rgba(36,41,47,.10); transition: box-shadow .25s, border-color .25s, opacity .25s; }
+.cg-node.leaf { border-color: #0969da; }
 .cg-node.hide { opacity: 0; }
-.cg-node.show { opacity: 1; animation: cgpop .4s cubic-bezier(.2,1.4,.4,1); }
+.cg-node.show { opacity: 1; animation: cgpop .45s cubic-bezier(.2,1.4,.4,1); }
 @keyframes cgpop { 0% { transform: scale(.4); opacity: 0 } 100% { transform: scale(1); opacity: 1 } }
-.cg-node .nm { font: 600 12px/1.25 var(--gen-font-mono); color: var(--cg-op, #7c66c9); }
-.cg-node.leaf .nm { color: var(--cg-leaf, #3a4aa8); }
-.cg-node .mt { font: 9px/1.35 var(--gen-font-mono); color: #8a8578; white-space: nowrap; }
-.cg-edge path { stroke: #c3bfae; stroke-width: 1.5; fill: none; transition: stroke .3s, stroke-width .3s; }
-.cg-edge.fwd path { stroke: #bf8700; stroke-width: 2.2; }
-.cg-node.done { box-shadow: 0 0 0 3px rgba(26,127,55,.15); }
+.cg-node .nm { font: 600 12px/1.3 ui-monospace,monospace; color: #8250df; }
+.cg-node.leaf .nm { color: #0969da; }
+.cg-node .mt { font: 9.5px/1.35 ui-monospace,monospace; color: #6e7781; }
+.cg-node .vl { font: 600 9.5px/1.35 ui-monospace,monospace; color: #1a7f37; }
+.cg-node.visiting { border-color: #bf8700; box-shadow: 0 0 0 4px rgba(191,135,0,.18); }
+.cg-node.done { box-shadow: 0 0 0 3px rgba(26,127,55,.14); }
 .cg-node.back { border-color: #1a7f37; }
 .cg-node.back .nm { color: #1a7f37; }
-.cg-edge.back path { stroke: #1a7f37; stroke-width: 2.2; }
-.comp-graph .cg-bar { display: flex; gap: .6em; margin-bottom: .6em; }
-.comp-graph .cg-bar button { font: 500 .85em var(--gen-font-sans); padding: .3em 1em;
-  border: 1px solid var(--ia-border); border-radius: 6px; background: #fff; color: var(--ia-accent-deep); cursor: pointer; }
-.comp-graph .cg-bar button:hover { background: var(--ia-panel); }
-.cg-chip { position: absolute; font: 600 10px var(--gen-font-mono); color: #fff; background: #1a7f37;
-  border-radius: 4px; padding: 2px 7px; white-space: nowrap; opacity: 0; pointer-events: none;
-  box-shadow: 0 2px 5px rgba(36,41,47,.2); }
+.cg-edge path { stroke: #a49b8e; stroke-width: 1.6; fill: none; transition: stroke .3s, stroke-width .3s; }
+.cg-edge.fwd path { stroke: #bf8700; stroke-width: 2.4; }
+.cg-edge.back path { stroke: #1a7f37; stroke-width: 2.6; }
+.comp-graph .cg-bar { display: flex; gap: .5em; margin-bottom: .6em; }
+.comp-graph .cg-bar button { font: 500 .85em -apple-system,"PingFang SC",sans-serif; padding: .32em 1em; border: 1px solid #ddd8ce; border-radius: 6px; background: #fff; color: #24292f; cursor: pointer; }
+.comp-graph .cg-bar button:hover { border-color: #0969da; color: #0969da; }
+.cg-chip { position: absolute; font: 600 10.5px ui-monospace,monospace; color: #fff; background: #8250df; border-radius: 5px; padding: 3px 8px; white-space: nowrap; opacity: 0; pointer-events: none; box-shadow: 0 2px 6px rgba(36,41,47,.2); }
+.cg-chip.g { background: #1a7f37; }
 .cg-chip.show { opacity: 1; animation: cgpop .4s cubic-bezier(.2,1.4,.4,1); }
 </style>
 <div class="cg-bar"><button onclick="cgForward()">前向 (建图)</button><button onclick="cgBackward()">反向 (余切回流)</button><button onclick="cgReset()">复位</button></div>
-<div class="cg-wrap"><svg viewBox="0 0 860 250"></svg>
-<div class="cg-node leaf" id="cgn-x"   style="left:22px;  top:38px"><div class="nm">x</div><div class="mt">(4,3) 数据</div></div>
-<div class="cg-node"      id="cgn-mm1" style="left:140px; top:38px"><div class="nm">matmul</div><div class="mt">inputs=[x,W1]</div></div>
-<div class="cg-node"      id="cgn-z1"  style="left:258px; top:38px"><div class="nm">add</div><div class="mt">inputs=[mm1,b1]</div></div>
-<div class="cg-node"      id="cgn-h"   style="left:376px; top:38px"><div class="nm">relu</div><div class="mt">maximum(z1, 0)</div></div>
-<div class="cg-node"      id="cgn-mm2" style="left:494px; top:38px"><div class="nm">matmul</div><div class="mt">inputs=[h,W2]</div></div>
-<div class="cg-node"      id="cgn-o"   style="left:612px; top:38px"><div class="nm">add</div><div class="mt">inputs=[mm2,b2]</div></div>
-<div class="cg-node"      id="cgn-L"   style="left:736px; top:38px"><div class="nm">mean</div><div class="mt">scalar loss</div></div>
-<div class="cg-node leaf" id="cgn-W1"  style="left:140px; top:160px"><div class="nm">W1</div><div class="mt">(3,5) 参数</div></div>
-<div class="cg-node leaf" id="cgn-b1"  style="left:258px; top:160px"><div class="nm">b1</div><div class="mt">(5,) 参数</div></div>
-<div class="cg-node leaf" id="cgn-W2"  style="left:494px; top:160px"><div class="nm">W2</div><div class="mt">(5,4) 参数</div></div>
-<div class="cg-node leaf" id="cgn-b2"  style="left:612px; top:160px"><div class="nm">b2</div><div class="mt">(4,) 参数</div></div>
-<div class="cg-node leaf" id="cgn-y"   style="left:736px; top:160px"><div class="nm">y</div><div class="mt">(4,4) 目标</div></div>
-<div class="cg-chip" id="cgc-L" style="left:700px; top:14px">L̄ = 1</div>
-<div class="cg-chip" id="cgc-W1" style="left:110px; top:198px">W̄1 √</div>
-<div class="cg-chip" id="cgc-b1" style="left:230px; top:198px">b̄1 √</div>
-<div class="cg-chip" id="cgc-W2" style="left:466px; top:198px">W̄2 √</div>
-<div class="cg-chip" id="cgc-b2" style="left:584px; top:198px">b̄2 √</div>
-<div class="cg-chip" id="cgc-x"  style="left:10px; top:14px">x̄ √</div>
+<div class="cg-wrap"><svg viewBox="0 0 880 264"></svg>
+<div class="cg-node leaf" id="cgn-x"   style="left:20px;  top:26px"><div class="nm">x</div><div class="mt">(4,3) 数据</div><div class="vl">1..9</div></div>
+<div class="cg-node"      id="cgn-mm1" style="left:146px; top:26px"><div class="nm">matmul</div><div class="mt">inputs=[x,W1]</div><div class="vl">(4,5)</div></div>
+<div class="cg-node"      id="cgn-z1"  style="left:272px; top:26px"><div class="nm">add</div><div class="mt">inputs=[mm1,b1]</div><div class="vl">(4,5)</div></div>
+<div class="cg-node"      id="cgn-h"   style="left:398px; top:26px"><div class="nm">relu</div><div class="mt">maximum(z1, 0)</div><div class="vl">(4,5) 3 处零</div></div>
+<div class="cg-node"      id="cgn-mm2" style="left:524px; top:26px"><div class="nm">matmul</div><div class="mt">inputs=[h,W2]</div><div class="vl">(4,4)</div></div>
+<div class="cg-node"      id="cgn-o"   style="left:650px; top:26px"><div class="nm">add</div><div class="mt">inputs=[mm2,b2]</div><div class="vl">(4,4)</div></div>
+<div class="cg-node"      id="cgn-L"   style="left:776px; top:26px"><div class="nm">mean</div><div class="mt">标量 · 根</div><div class="vl">L</div></div>
+<div class="cg-node leaf" id="cgn-W1"  style="left:146px; top:172px"><div class="nm">W1</div><div class="mt">(3,5) 参数</div><div class="vl">.</div></div>
+<div class="cg-node leaf" id="cgn-b1"  style="left:272px; top:172px"><div class="nm">b1</div><div class="mt">(5,) 参数</div><div class="vl">.</div></div>
+<div class="cg-node leaf" id="cgn-W2"  style="left:524px; top:172px"><div class="nm">W2</div><div class="mt">(5,4) 参数</div><div class="vl">.</div></div>
+<div class="cg-node leaf" id="cgn-b2"  style="left:650px; top:172px"><div class="nm">b2</div><div class="mt">(4,) 参数</div><div class="vl">.</div></div>
+<div class="cg-node leaf" id="cgn-y"   style="left:776px; top:172px"><div class="nm">y</div><div class="mt">(4,4) 目标</div><div class="vl">.</div></div>
+<div class="cg-chip"     id="cgc-L"  style="left:776px; top:2px">L̄ = 1</div>
+<div class="cg-chip g"   id="cgc-W1" style="left:118px; top:212px">W̄1 ✓</div>
+<div class="cg-chip g"   id="cgc-b1" style="left:244px; top:212px">b̄1 ✓</div>
+<div class="cg-chip g"   id="cgc-W2" style="left:496px; top:212px">W̄2 ✓</div>
+<div class="cg-chip g"   id="cgc-b2" style="left:622px; top:212px">b̄2 ✓</div>
+<div class="cg-chip g"   id="cgc-x"  style="left:8px;  top:2px">x̄ ✓</div>
 </div>
 </div>
 <script>
 (function () {
-  var NW = 92, NH = 46;  // 估算卡片尺寸(取 min-width 与两行文本), 用于边的锚点
   function anch(id) {
     var el = document.getElementById("cgn-" + id);
     var x = parseFloat(el.style.left), y = parseFloat(el.style.top);
-    return { x: x, y: y, w: el.offsetWidth || NW, h: el.offsetHeight || NH, el: el };
+    return { x: x, y: y, w: el.offsetWidth, h: el.offsetHeight };
   }
   var edges = [["x","mm1"],["W1","mm1"],["mm1","z1"],["b1","z1"],["z1","h"],["h","mm2"],
                ["W2","mm2"],["mm2","o"],["b2","o"],["o","L"],["y","L"]];
@@ -130,20 +126,22 @@ class Tensor:
     var a = anch(e[0]), b = anch(e[1]);
     var g = document.createElementNS(NS, "g"); g.setAttribute("class", "cg-edge"); g.id = "cge-" + e[0] + "-" + e[1];
     var p = document.createElementNS(NS, "path");
-    var up = b.y > a.y;  // 下排->上排
-    var x1 = a.x + a.w / 2, y1 = up ? a.y : a.y + a.h / 2;
-    var x2 = b.x + b.w / 2, y2 = up ? b.y + b.h : b.y + b.h / 2;
-    if (!up) { x1 = a.x + a.w; x2 = b.x; y1 = a.y + a.h / 2; y2 = b.y + b.h / 2; }
+    var up = b.y < a.y;
+    var x1, y1, x2, y2;
+    if (up) { x1 = a.x + a.w / 2; y1 = a.y; x2 = b.x + b.w / 2; y2 = b.y + b.h; }
+    else    { x1 = a.x + a.w; y1 = a.y + a.h / 2; x2 = b.x; y2 = b.y + b.h / 2; }
     var mx = up ? x1 : (x1 + x2) / 2;
     p.setAttribute("d", "M " + x1 + " " + y1 + " C " + mx + " " + y1 + ", " + mx + " " + y2 + ", " + x2 + " " + y2);
     g.appendChild(p); svg.appendChild(g);
   });
   var fwdOrder = ["x","W1","b1","W2","b2","y","mm1","z1","h","mm2","o","L"];
+  var backEdges = [["L","o"],["o","b2"],["o","mm2"],["mm2","W2"],["mm2","h"],["h","z1"],["z1","b1"],["z1","mm1"],["mm1","W1"],["mm1","x"]];
+  var backNodes = ["L","o","b2","mm2","W2","h","z1","b1","mm1","W1","x"];
   var timers = [];
   function clearTimers() { timers.forEach(clearTimeout); timers = []; }
   function hideAll() {
     clearTimers();
-    document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.classList.remove("show", "done", "back"); n.classList.add("hide"); });
+    document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.classList.remove("show", "done", "back", "visiting"); n.classList.add("hide"); });
     document.querySelectorAll("#mlp-graph .cg-edge").forEach(function (e) { e.classList.remove("fwd", "back"); });
     document.querySelectorAll("#mlp-graph .cg-chip").forEach(function (c) { c.classList.remove("show"); });
   }
@@ -155,18 +153,19 @@ class Tensor:
     hideAll();
     fwdOrder.forEach(function (id, i) {
       timers.push(setTimeout(function () {
-        var n = document.getElementById("cgn-" + id); n.classList.remove("hide"); n.classList.add("show"); n.classList.add("done");
+        var n = document.getElementById("cgn-" + id);
+        n.classList.remove("hide"); n.classList.add("show"); n.classList.add("visiting");
         edges.forEach(function (e) { if (e[1] === id) { var g = document.getElementById("cge-" + e[0] + "-" + e[1]); if (g) g.classList.add("fwd"); } });
+        timers.push(setTimeout(function () { n.classList.remove("visiting"); n.classList.add("done"); }, 300));
       }, i * 230));
     });
   };
-  var backEdges = [["L","o"],["o","b2"],["o","mm2"],["mm2","W2"],["mm2","h"],["h","z1"],["z1","b1"],["z1","mm1"],["mm1","W1"],["mm1","x"]];
-  var backNodes = ["L","o","b2","mm2","W2","h","z1","b1","mm1","W1","x"];
   window.cgBackward = function () {
     hideAll();
     backNodes.forEach(function (id, i) {
       timers.push(setTimeout(function () {
-        var n = document.getElementById("cgn-" + id); n.classList.remove("hide"); n.classList.add("back");
+        var n = document.getElementById("cgn-" + id);
+        n.classList.remove("hide"); n.classList.add("show"); n.classList.add("back");
         backEdges.forEach(function (e) { if (e[0] === id) { var g = document.getElementById("cge-" + e[1] + "-" + e[0]); if (g) g.classList.add("back"); } });
         var chip = document.getElementById("cgc-" + id); if (chip) chip.classList.add("show");
       }, 300 + i * 230));
