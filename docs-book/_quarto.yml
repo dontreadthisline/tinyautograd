@@ -14,8 +14,8 @@ book:
     - 02-value-centric.qmd
     - 03-dsl.qmd
     - 04-api.qmd
-    - 05-graph-lifetime.qmd
-    - 06-lazy.qmd
+    - 05-lazy.qmd
+    - 06-graph-lifetime.qmd
     - 07-types.qmd
 
 format:
