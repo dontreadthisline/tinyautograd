@@ -69,7 +69,7 @@ class Tensor:
 .comp-graph .cg-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .cg-node { position: absolute; background: #fff; border: 1.5px solid var(--cg-op, #7c66c9);
   border-radius: 8px; padding: 4px 8px 5px; min-width: 74px; text-align: center;
-  box-shadow: 0 1px 4px rgba(36,41,47,.09); transition: box-shadow .25s, border-color .25s; opacity: 0; }
+  box-shadow: 0 1px 4px rgba(36,41,47,.09); transition: box-shadow .25s, border-color .25s; }
 .cg-node.leaf { border-color: var(--cg-leaf, #3a4aa8); }
 .cg-node.show { opacity: 1; animation: cgpop .4s cubic-bezier(.2,1.4,.4,1); }
 @keyframes cgpop { 0% { transform: scale(.4); opacity: 0 } 100% { transform: scale(1); opacity: 1 } }
@@ -140,15 +140,18 @@ class Tensor:
   var fwdOrder = ["x","W1","b1","W2","b2","y","mm1","z1","h","mm2","o","L"];
   var timers = [];
   function clearTimers() { timers.forEach(clearTimeout); timers = []; }
-  function reset() {
+  function hideAll() {
     clearTimers();
     document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.classList.remove("show", "done", "back"); n.style.opacity = 0; });
     document.querySelectorAll("#mlp-graph .cg-edge").forEach(function (e) { e.classList.remove("fwd", "back"); });
     document.querySelectorAll("#mlp-graph .cg-chip").forEach(function (c) { c.classList.remove("show"); });
   }
-  window.cgReset = reset;
+  window.cgReset = function () {
+    hideAll();
+    document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.style.opacity = ""; });
+  };
   window.cgForward = function () {
-    reset();
+    hideAll();
     fwdOrder.forEach(function (id, i) {
       timers.push(setTimeout(function () {
         var n = document.getElementById("cgn-" + id); n.classList.add("show"); n.classList.add("done");
@@ -159,7 +162,7 @@ class Tensor:
   var backEdges = [["L","o"],["o","b2"],["o","mm2"],["mm2","W2"],["mm2","h"],["h","z1"],["z1","b1"],["z1","mm1"],["mm1","W1"],["mm1","x"]];
   var backNodes = ["L","o","b2","mm2","W2","h","z1","b1","mm1","W1","x"];
   window.cgBackward = function () {
-    reset();
+    hideAll();
     document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.classList.add("show"); });
     backNodes.forEach(function (id, i) {
       timers.push(setTimeout(function () {
@@ -171,7 +174,6 @@ class Tensor:
   };
 })();
 </script>
-</div>
 
 ## 反向引擎
 
