@@ -71,6 +71,7 @@ class Tensor:
   border-radius: 8px; padding: 4px 8px 5px; min-width: 74px; text-align: center;
   box-shadow: 0 1px 4px rgba(36,41,47,.09); transition: box-shadow .25s, border-color .25s; }
 .cg-node.leaf { border-color: var(--cg-leaf, #3a4aa8); }
+.cg-node.hide { opacity: 0; }
 .cg-node.show { opacity: 1; animation: cgpop .4s cubic-bezier(.2,1.4,.4,1); }
 @keyframes cgpop { 0% { transform: scale(.4); opacity: 0 } 100% { transform: scale(1); opacity: 1 } }
 .cg-node .nm { font: 600 12px/1.25 var(--gen-font-mono); color: var(--cg-op, #7c66c9); }
@@ -142,19 +143,19 @@ class Tensor:
   function clearTimers() { timers.forEach(clearTimeout); timers = []; }
   function hideAll() {
     clearTimers();
-    document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.classList.remove("show", "done", "back"); n.style.opacity = 0; });
+    document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.classList.remove("show", "done", "back"); n.classList.add("hide"); });
     document.querySelectorAll("#mlp-graph .cg-edge").forEach(function (e) { e.classList.remove("fwd", "back"); });
     document.querySelectorAll("#mlp-graph .cg-chip").forEach(function (c) { c.classList.remove("show"); });
   }
   window.cgReset = function () {
     hideAll();
-    document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.style.opacity = ""; });
+    document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.classList.remove("hide"); });
   };
   window.cgForward = function () {
     hideAll();
     fwdOrder.forEach(function (id, i) {
       timers.push(setTimeout(function () {
-        var n = document.getElementById("cgn-" + id); n.classList.add("show"); n.classList.add("done");
+        var n = document.getElementById("cgn-" + id); n.classList.remove("hide"); n.classList.add("show"); n.classList.add("done");
         edges.forEach(function (e) { if (e[1] === id) { var g = document.getElementById("cge-" + e[0] + "-" + e[1]); if (g) g.classList.add("fwd"); } });
       }, i * 230));
     });
@@ -163,10 +164,9 @@ class Tensor:
   var backNodes = ["L","o","b2","mm2","W2","h","z1","b1","mm1","W1","x"];
   window.cgBackward = function () {
     hideAll();
-    document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.classList.add("show"); });
     backNodes.forEach(function (id, i) {
       timers.push(setTimeout(function () {
-        var n = document.getElementById("cgn-" + id); n.classList.add("back");
+        var n = document.getElementById("cgn-" + id); n.classList.remove("hide"); n.classList.add("back");
         backEdges.forEach(function (e) { if (e[0] === id) { var g = document.getElementById("cge-" + e[1] + "-" + e[0]); if (g) g.classList.add("back"); } });
         var chip = document.getElementById("cgc-" + id); if (chip) chip.classList.add("show");
       }, 300 + i * 230));
