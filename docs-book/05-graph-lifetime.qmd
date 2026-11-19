@@ -6,16 +6,16 @@
 `no_grad` 是 autograd 框架的必需品吗？什么条件下它可以（应该）从公开 API 中消失？
 :::
 
-## 5.1 三家坐标系
+## 三家坐标系
 
 | | 图何时建 | 图何时死 | 推理时防图堆积靠 |
 |---|---|---|---|
-| PyTorch | 算子即建（急切） | `backward()` 后释放 | 用户声明 `no_grad` |
+| PyTorch | 算子即建（eager） | `backward()` 后释放 | 用户声明 `no_grad` |
 | JAX | 仅 `grad` 追踪期间 | tracer 作用域结束 | 平时根本没有图 |
 | MLX | 算子即建（惰性） | **求值即断链** | 框架默认策略 |
 | tinyautograd | 算子即建（默认建边） | Python 引用回收 | 用户声明 `no_grad` |
 
-PyTorch 急切求值，没有"求值完成"的时刻可以挂钩，框架无法自动判断"这个 tensor 以后还要不要梯度"——意图无处自动对齐，只能让用户声明。JAX 把图的作用域缩到一次追踪，普通调用零图开销，"不要图"是缺省。MLX 最有意思：图是惰性建的，但**求值回调里框架主动断链**——MLX 源码（`mlx/transforms.cpp`，scheduler 求值完成处）：
+PyTorch eager 求值，没有"求值完成"的时刻可以挂钩，框架无法自动判断"这个 tensor 以后还要不要梯度"——意图无处自动对齐，只能让用户声明。JAX 把图的作用域缩到一次追踪，普通调用零图开销，"不要图"是缺省。MLX 最有意思：图是惰性建的，但**求值回调里框架主动断链**——MLX 源码（`mlx/transforms.cpp`，scheduler 求值完成处）：
 
 ```cpp
 arr.set_status(array::Status::evaluated);
@@ -26,7 +26,7 @@ if (!arr.is_tracer()) {
 
 用户从不声明"我不要梯度"；框架按"求值过没有 + 是不是 tracer"自动分诊——推理时 `mx.eval(out)` 一执行，图就死了；训练时 `grad` 内部的数组标记为 tracer，豁免断链。**`no_grad` 的内存职能被求值即断链的默认策略替代了。**
 
-## 5.2 图随引用存活
+## 图随引用存活
 
 tinyautograd 的 `eval()` 只物化 `_array`，`t.op`/`t.inputs` 原样保留——实验验证：
 
@@ -40,7 +40,7 @@ assert t.op is not None and t.inputs   # 图原封不动
 
 理论上存在对齐 MLX 的路线：在 `eval()` 里加断链（`t.op, t.inputs = None, ()`），`no_grad` 随之退休。但这会继承 MLX 的 sharp edge——**用户在目标函数内部手动 `eval` 中间值 = 图提前截断 = 梯度静默算错**。tinyautograd 选择了更钝但更教学友好的形态：图长寿（可随时内省、可对已有输出反传 `vjp`），代价由 `no_grad` 显式管理。错误的形态从"静默算错"（不可见）变成"占内存"（可见）——教学框架宁要可见的浪费。
 
-## 5.3 detach 是语义孔
+## detach 是语义孔
 
 第 4 章已定位 `detach` 是语义孔，本章补足它与 `no_grad` 的正交性：
 

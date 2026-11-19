@@ -6,7 +6,7 @@
 反向传播需要每个中间值的来历。这份"来历记录"应该挂在**值**上（每个张量知道自己是谁算出来的），还是挂在**执行流**上（框架记录一条执行的磁带，像 PyTorch 的 autograd graph 那样），还是根本不记（每次求导时重新追踪，像 JAX 那样）？三种选择各自买到什么、付出什么？
 :::
 
-## 2.1 三条同构与四条公理
+## 三条同构与四条公理
 
 全书的设计哲学可以压缩为**三条同构**：
 
@@ -25,12 +25,22 @@
 - **公理 C（API 表面 = DSL 语法面）**：凡不构成图描述的，不进核心 API（第 4 章展开）。
 - **公理 D（类型即边界，弱形式）**：类型标注是 DSL 子集边界的声明，签名按边界书写（第 7 章）。
 
-## 2.2 Tensor 的三位一体
+## Tensor 的三位一体
 
-tinyautograd 的回答是**值中心表示**——Tensor 一身三职：
+tinyautograd 的回答是**值中心表示**——Tensor 一身三职。核心结构（完整实现见 [tensor.py](https://github.com/dontreadthisline/tinyautograd/blob/main/tinyautograd/tensor.py)）：
 
 ```python
-{{< include ../tinyautograd/tensor.py >}}
+class Op(NamedTuple):
+    fn: Any                     # MLX 函数 (前向)
+    args: tuple[Array, ...]     # 前向实参 (反向时 mx.vjp 的 primals)
+    outputs: tuple[Array, ...] = ()   # 多输出算子共享时非空
+
+class Tensor:
+    __slots__ = ("_array", "inputs", "op", "index")
+    _array: Array               # 惰性本体
+    inputs: tuple[Tensor, ...]  # 父节点 = 图的边
+    op: Op | None               # None 即叶子
+    index: int                  # 多输出共享 op 时的位置
 ```
 
 三个角色对应源码里的三个成员：
@@ -53,7 +63,7 @@ tinyautograd 的回答是**值中心表示**——Tensor 一身三职：
 
 值中心的关键收益是**可内省性**：任何一个中间 Tensor，你都能直接问它的形状（第 1 章的 $\bar v$ 是向量——`shape`/`dtype` 让余切的构造类型正确）、它的父节点、它的算子。教学框架尤其需要这一点——图不是黑盒。
 
-## 2.3 反向引擎
+## 反向引擎
 
 有了图，式 (1.4) 的实现就是一次逆拓扑遍历。核心函数 `_backward`（完整实现见 `tinyautograd/autograd.py`）做三件事：
 
@@ -63,7 +73,7 @@ tinyautograd 的回答是**值中心表示**——Tensor 一身三职：
 
 多输出算子（如 `split`）的多个输出共享同一个 `op`、以 `index` 区分；反传时每个输出独立贡献自己的余切、其余位置补零——这保证了"每个输出的部分导数"按行拼接后恰是该算子的完整 VJP。
 
-## 2.4 图的弱持有形态
+## 图的弱持有形态
 
 值中心表示下没有"当前图"这个全局概念：图就是 Python 对象间的引用链，`t.inputs` 强引用父节点。图的**生死完全交给 Python 的引用计数**——一个中间值一旦没有任何人持有，它连同它的 `op` 一起消失。这带来两个直接推论：
 

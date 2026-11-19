@@ -1,28 +1,44 @@
-# 提升门与词汇表 {#sec-dsl}
+# lift 与 const {#sec-dsl}
 
 前两章建立了：每个 Tensor 记得自己的 `op`（前向函数）与 `inputs`，反传时由 VJP 传导余切。但第 1 章的分解性公理还欠着最后一环——**词汇表从哪里来**。用户要写新算子（后端有、词汇表没有的；甚至任何人都没有的），框架靠什么保证"进来一个，反向就绪一个"？
 
 ::: {.callout-important title="本章问题"}
-框架如何把"任意一个后端函数"提升为"带反向的可导算子"？提升门为什么恰好是两个（可导算子门与常量源门）而不是一个或三个？
+框架如何把"任意一个 MLX 函数"扩展为"带反向的可导算子"？扩展入口为什么恰好是两个（`lift` 与 `const`）而不是一个或三个？
 :::
 
-## 3.1 lift 门
+## lift
+
+`lift(fn)` 返回的 `wrapped` 只比裸调 `fn` 多做两件事：把 Python 标量包成 `Tensor`（`wrap`），以及**建边**。核心实现（完整词汇表见 [ops.py](https://github.com/dontreadthisline/tinyautograd/blob/main/tinyautograd/ops.py)）：
 
 ```python
-{{< include ../tinyautograd/ops.py >}}
+def lift(fn):
+    def wrapped(*args):
+        ts = tuple(wrap(a) for a in args)
+        arrays = tuple(a._array for a in ts)
+        return Tensor(fn(*arrays), inputs=ts, op=Op(fn, arrays))
+    return wrapped
 ```
 
-`lift(fn)` 返回的 `wrapped` 只比裸调 `fn` 多做两件事：把 Python 标量包成 `Tensor`（`wrap`），以及**建边**——`Tensor(fn(*arrays), inputs=ts, op=Op(fn, arrays))`。反向是免费的：`Op` 里存着 `fn` 与 `args`，第 2 章的反向引擎到这一步会调 `mx.vjp(fn, args, cotan)`。
+反向是免费的：`Op` 里存着 `fn` 与 `args`，第 2 章的反向引擎到这一步会调 `mx.vjp(fn, args, cotan)`。
 
 注意一个关键的不对称：**局部导数从不手写**。VJP 被外包给 MLX 的自动微分——tinyautograd 的反向引擎组织"整体的反向"（拓扑序、余切累加），每个算子的"局部反向"信任底层。这是"在 MLX 之上"的实质含义：一层 AD 组织另一层 AD 的结果。
 
 `lift_multi` 是多输出变体：`fn` 返回 tuple 时，多个输出 Tensor 共享一个 `op`（`index` 区分），对应第 2 章的补零反传。
 
-## 3.2 const 门
+## const
 
-`const(fn)(args)` 返回 `Tensor(fn(*args))`——`op=None`、`inputs=()`，叶子。它不是算子：参数是**形状描述**而非数组，"对形状求导"无意义。它在图里的角色是**源点**——链式法则的传导在这里终止。
+`const(fn)(args)` 返回 `Tensor(fn(*args))`——`op=None`、`inputs=()`，叶子：
 
-两扇门构成一对**函子对偶**，恰好覆盖图的两类组成：
+```python
+def const(fn):
+    def wrapped(*args):
+        return Tensor(fn(*args))   # 无边: op=None, inputs=()
+    return wrapped
+```
+
+它不是算子：参数是**形状描述**而非数组，"对形状求导"无意义。它在图里的角色是**源点**——链式法则的传导在这里终止。
+
+`lift` 与 `const` 一体两面，恰好覆盖图的两类组成：
 
 $$
 \underbrace{\texttt{lift}}_{\text{边: 有输入, 参与反传}} \qquad\quad \underbrace{\texttt{const}}_{\text{源: 无输入, 调用时刻定值}} \qquad \text{图} = \text{源点集} \cup \text{边集}
@@ -36,7 +52,7 @@ $$
 `ops.py` 里全部算子是一行式的静态定义：`add = lift(mx.add)`；带元数据参数的算子（`sum`/`reshape`/`stack`/`split`）用闭包固定 `axis`/`shape` 后提升——保证 `Op.args` 能完整重放前向。每个名字真实存在于模块层，IDE、类型检查、`dir()` 全部可见。这套静态词汇表是可见性与契约的载体，第 4 章展开。
 :::
 
-## 3.3 中缀、下标与组合
+## 中缀、下标与组合
 
 算子词汇以函数形态存在于 `ops.*`，同时 Tensor 提供三层语法糖（`tensor.py`）：
 
@@ -46,7 +62,7 @@ $$
 
 `compose` 提供函数级组合子（$f \circ g$），服务"算子是函数"的值中心哲学——词汇既是名词（数据流图里的边）也是动词（用户可直接组合的 Python 函数）。
 
-## 3.4 DSL 的边界
+## DSL 的边界
 
 第三条同构（计算图 $\leftrightarrow$ DSL）的实践形式是：**征用 Python 子集为 DSL，而非发明新语言**。征用的语法与图结构的对应：
 
@@ -58,12 +74,12 @@ $$
 
 边界同样明确——**语义上不属于图的东西不进 DSL**：副作用、IO（`print`/`item()` 是隐式求值门）、反射、可变全局状态，它们在 trace 前后发生，或不参与图。公理 C（API 表面 = DSL 语法面）因此有了一个可操作的检验法：一个候选 API 若不属于任何一行的右列，它就不该进核心（第 4 章的门面分层正是这个检验法的应用）。
 
-## 3.5 no_grad 开关
+## no_grad 开关
 
 `lift`/`lift_multi` 内部都检查模块级标志 `_no_grad`：上下文管理器 `no_grad()` 将其置位后，算子退化为纯前向（不建边）。这是**控制图构成**的最小机制——它不销毁已有的图（值中心表示下图的生死由引用决定），只决定**之后的**算子是否建边。第 5 章将把它放到三家框架的坐标系里，追问它为什么存在、以及在别的表示法下为什么会消失。
 
 ::: {.callout-important title="本章要点"}
-分解性公理的工程形式是**两扇提升门**：图上的动词走 `lift`（自动获得外包的反向），图的源点走 `const`（自动获得"常量 + 每次调用定值"语义）。词汇表静态列出高频词条，临时需求由门即时满足——封闭的核心，开放的边界。
+分解性公理的工程形式正是这两个扩展入口：图上的边走 `lift`（自动获得外包的反向），图的源点走 `const`（自动获得"常量 + 每次调用定值"语义）。词汇表静态列出高频词条，临时需求即时扩展——封闭的核心，开放的边界。
 :::
 
 ::: {.callout-caution title="练习"}

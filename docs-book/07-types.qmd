@@ -6,7 +6,7 @@ tinyautograd 只有一千行不到，却用上了 Python 3.12+ 类型系统的�
 哪些框架契约适合用类型表达（编辑期/静态检查期暴露错误），哪些必须留给运行时（`isinstance`/测试）？分界线画在哪里？
 :::
 
-## 7.1 PEP 695
+## PEP 695
 
 ```python
 type Array = mx.array                    # tensor.py
@@ -25,7 +25,7 @@ def value_and_grad[**P](
 
 `[**P]` 是 `ParamSpec`——"把被包装函数的签名原样传递给包装结果"。类型检查器因此知道 `value_and_grad(loss_fn)` 接受 `(params, x, y)` 而不是别的——变换保持被变换者的形状，这一契约在数学上就是"算子提升"（第 3 章 `lift` 的类型层对应物）。
 
-## 7.2 变换是自函子
+## 变换是自函子
 
 变换的类型是 $\texttt{Callable} \to \texttt{Callable}$：定义域与值域相同，类型封闭。这不是实现便利而是设计声明——**类型封闭性正是可组合性的表述**：
 
@@ -37,20 +37,24 @@ $$
 
 类型决策还有两条值得记录：**D3**（不做静态 DSL 检查——类型标注为文档与开发体验，不当硬约束）与 **T1**（dtype 不做泛型参数——不可导靠运行时屏障，留将来静态化升级路径）。它们共同划定了公理 D 的"弱形式"：类型是边界的声明，不是边界的执行。
 
-## 7.3 Protocol 的进与退
+## Protocol 的适用边界
 
-早期版本有一个 `backend/protocols.py`，用 `@runtime_checkable` 的 `Protocol` 定义 `ArrayLike`（框架对底层数组的全部需求：`shape/dtype/item/tolist/__getitem__`）与 `Backend`（含 `ops_table: dict[str, ArrayFn]`）。Protocol 的价值是**结构化类型**：不继承、只看形状，`isinstance` 可检——替换后端 = 提供一个形状匹配的对象。
+Python 的 `Protocol`（结构化类型：不继承、只看形状、`isinstance` 可检）适合一类契约：**实现方是外部动态注入的**，调用方只能描述"我要什么形状"而不能指名道姓。tinyautograd 恰好没有这类场合——底层直接绑定 MLX，类型层的策略因此是指名而非描形：
 
-多后端退役后（第 4 章），这层协议随之删除。留下的经验值得记录：
+```python
+type Array = mx.array    # 指名, 而非 ArrayLike Protocol 描形
+```
 
-- Protocol 表达的是**向内的需求**（"谁能当我底层数组"），与 NumPy `__array__` 这类**向外的供给**协议恰好成对（第 4 章）——单后端下需求侧收缩为一句 `type Array = mx.array`，供给侧（`__array__`）反而成为未来更值得补的方向。
+两条由此而来的经验：
+
+- 与 NumPy `__array__` 这类**向外的供给**协议相对，Protocol 描述的是**向内的需求**；需求侧一旦可以指名，Protocol 层就不需要了。第 4 章的供给方向——给 `Tensor` 补 `__array__`——才是未来更有价值的一侧。
 - `Array` 在 `Op`/`ArrayFn` 的标注里最终放宽为 `Any`——nanobind 生成物与结构化协议的匹配存在真实的工具链摩擦。**类型系统的诚实边界**：当契约无法可靠静态表达时，宁要显式的 `Any` + 运行时测试，不要自欺的精确标注。
 
-## 7.4 结构的最小声明
+## 结构的最小声明
 
 `Tensor.__slots__ = ("_array", "inputs", "op", "index")` 把值对象钉死在四个槽上——没有 `__dict__`，属性拼错当场报错（`t.input` 而非 `t.inputs` 是教学场景高频错误）。`Op` 是 `NamedTuple`：不可变、可解包、有默认值——`outputs: tuple = ()` 让单输出算子的构造省一项。两者共同把"图的形状"（值 + 三元组元数据）在类型层钉死：**图上不可能出现第五个成员，Op 不可能在建边后被篡改**。
 
-## 7.5 分界线
+## 分界线
 
 | 契约 | 表达方式 | 暴露时机 |
 |---|---|---|
