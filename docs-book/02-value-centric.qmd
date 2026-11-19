@@ -57,6 +57,83 @@ class Tensor:
 
 值中心的关键收益是**可内省性**：任何一个中间 Tensor，你都能直接问它的形状（第 1 章的 $\bar v$ 是向量——`shape`/`dtype` 让余切的构造类型正确）、它的父节点、它的算子。教学框架尤其需要这一点——图不是黑盒。
 
+## 一张真实的图
+
+下面这张计算图由页面脚本实时生成（SVG），对应 `examples/demo.py` 的两层 MLP 损失：六个叶子（参数与数据）、六个算子节点。点击按钮观察两种遍历——**前向**按拓扑序点亮（建图），**反向**从 $L$ 出发逆序回流（余切传导，正是本章反向引擎的执行过程）：
+
+<div class="comp-graph" id="mlp-graph">
+<style>
+.comp-graph { margin: 1.2em 0; }
+.comp-graph svg { width: 100%; height: auto; display: block; }
+.comp-graph .cg-node rect { fill: #fbfcfe; stroke: var(--ia-border); stroke-width: 1.2; rx: 6; transition: all .3s; }
+.comp-graph .cg-node text { font: 600 12px var(--gen-font-mono); fill: #444; transition: fill .3s; }
+.comp-graph .cg-edge path { stroke: var(--ia-border); stroke-width: 1.4; fill: none; transition: all .3s; }
+.comp-graph .cg-node.lit rect { fill: var(--ia-panel); stroke: var(--ia-accent); }
+.comp-graph .cg-node.lit text { fill: var(--ia-accent-deep); }
+.comp-graph .cg-edge.lit path { stroke: var(--ia-accent); stroke-width: 2; }
+.comp-graph .cg-node.back rect { fill: #fdf1f0; stroke: #b54a44; }
+.comp-graph .cg-node.back text { fill: #8f3732; }
+.comp-graph .cg-edge.back path { stroke: #b54a44; stroke-width: 2; }
+.comp-graph .cg-bar { display: flex; gap: .6em; margin-bottom: .6em; }
+.comp-graph .cg-bar button { font: 500 .85em var(--gen-font-sans); padding: .3em 1em; border: 1px solid var(--ia-border); border-radius: 6px; background: #fff; color: var(--ia-accent-deep); cursor: pointer; }
+.comp-graph .cg-bar button:hover { background: var(--ia-panel); }
+</style>
+<div class="cg-bar"><button onclick="cgForward()">前向 (建图)</button><button onclick="cgBackward()">反向 (余切回流)</button></div>
+<script>
+(function () {
+  var COLW = 110, ROWH = 54, W = 80, H = 30, X0 = 20, Y0 = 44;
+  var nodes = [
+    { id: "x",   col: 0, row: 0, leaf: 1 }, { id: "W1",  col: 0, row: 1, leaf: 1 },
+    { id: "b1",  col: 0, row: 2, leaf: 1 }, { id: "W2",  col: 0, row: 3, leaf: 1 },
+    { id: "b2",  col: 0, row: 4, leaf: 1 }, { id: "y",   col: 0, row: 5, leaf: 1 },
+    { id: "mm1", col: 1, row: 0.5 }, { id: "z1", col: 2, row: 1.5 }, { id: "h", col: 3, row: 1.5 },
+    { id: "mm2", col: 4, row: 2.5 }, { id: "o", col: 5, row: 3.5 }, { id: "L", col: 6, row: 3.5 }
+  ];
+  var edges = [["x","mm1"],["W1","mm1"],["mm1","z1"],["b1","z1"],["z1","h"],["h","mm2"],
+               ["W2","mm2"],["mm2","o"],["b2","o"],["o","L"],["y","L"]];
+  var byId = {}; nodes.forEach(function (n) { byId[n.id] = n; n.px = X0 + n.col * COLW; n.py = Y0 + n.row * ROWH; });
+  var svgNS = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("viewBox", "0 0 " + (X0 + 7 * COLW) + " " + (Y0 + 6 * ROWH));
+  nodes.forEach(function (n) {
+    if (n.leaf) { n.py = Y0 + n.row * ROWH; }
+    var g = document.createElementNS(svgNS, "g"); g.setAttribute("class", "cg-node"); g.id = "cgn-" + n.id;
+    var r = document.createElementNS(svgNS, "rect");
+    r.setAttribute("x", n.px); r.setAttribute("y", n.py); r.setAttribute("width", W); r.setAttribute("height", H); r.setAttribute("rx", 6);
+    var t = document.createElementNS(svgNS, "text");
+    t.setAttribute("x", n.px + W / 2); t.setAttribute("y", n.py + 19); t.setAttribute("text-anchor", "middle");
+    t.textContent = n.id; g.appendChild(r); g.appendChild(t); svg.appendChild(g); n.cx = n.px + W / 2; n.cy = n.py + H / 2;
+  });
+  edges.forEach(function (e) {
+    var a = byId[e[0]], b = byId[e[1]];
+    var g = document.createElementNS(svgNS, "g"); g.setAttribute("class", "cg-edge"); g.id = "cge-" + e[0] + "-" + e[1];
+    var p = document.createElementNS(svgNS, "path");
+    var x1 = a.px + W, y1 = a.cy, x2 = b.px, y2 = b.cy, m = (x1 + x2) / 2;
+    p.setAttribute("d", "M " + x1 + " " + y1 + " C " + m + " " + y1 + ", " + m + " " + y2 + ", " + (x2 - 4) + " " + y2);
+    g.appendChild(p); svg.appendChild(g);
+  });
+  var host = document.getElementById("mlp-graph"); if (host) host.appendChild(svg);
+  var topo = ["x","W1","b1","W2","b2","y","mm1","z1","h","mm2","o","L"];
+  function clearAll() { document.querySelectorAll("#mlp-graph .cg-node, #mlp-graph .cg-edge").forEach(function (el) { el.classList.remove("lit", "back"); }); }
+  window.cgForward = function () {
+    clearAll(); topo.forEach(function (id, i) {
+      setTimeout(function () { document.getElementById("cgn-" + id).classList.add("lit");
+        document.querySelectorAll("#mlp-graph .cg-edge").forEach(function (e) {
+          if (e.id === "cge-" + id + "-" + topo.slice(0, i).find(function (p) { return e.id === "cge-" + p + "-" + id; }) ) {} });
+      }, i * 260);
+    });
+    edges.forEach(function (e, i) { setTimeout(function () { var el = document.getElementById("cge-" + e[0] + "-" + e[1]); if (el) el.classList.add("lit"); }, (topo.indexOf(e[1]) + 1) * 260); });
+  };
+  window.cgBackward = function () {
+    clearAll(); var rev = topo.slice().reverse();
+    rev.forEach(function (id, i) { setTimeout(function () { document.getElementById("cgn-" + id).classList.add("back"); }, i * 260); });
+    edges.slice().reverse().forEach(function (e) {
+      setTimeout(function () { var el = document.getElementById("cge-" + e[0] + "-" + e[1]); if (el) el.classList.add("back"); }, (rev.indexOf(e[0]) + 1) * 260); });
+  };
+})();
+</script>
+</div>
+
 ## 反向引擎
 
 有了图，式 (1.4) 的实现就是一次逆拓扑遍历。核心函数 `_backward`（完整实现见 `tinyautograd/autograd.py`）做三件事：
