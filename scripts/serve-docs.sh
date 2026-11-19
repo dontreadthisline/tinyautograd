@@ -26,7 +26,7 @@ if lsof -iTCP:"$PORT" -sTCP:LISTEN -P -n >/dev/null 2>&1; then
   exit 1
 fi
 
-nohup python3 -m http.server "$PORT" --directory docs-book/_book \
+nohup python3 scripts/serve-docs.py "$PORT" docs-book/_book \
   > /tmp/tinyautograd-docs-serve.log 2>&1 &
 
 for _ in $(seq 1 10); do
