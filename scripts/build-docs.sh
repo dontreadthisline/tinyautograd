@@ -41,7 +41,7 @@ fi
 newest_src=$( { stat -f '%m' docs-book/_quarto.yml 2>/dev/null; \
     find docs-book -maxdepth 1 \( -name '*.qmd' -o -name '*.html' -o -name '*.bib' \) -exec stat -f '%m' {} \; ; \
     find tinyautograd -name '*.py' -exec stat -f '%m' {} \; ; } | sort -rn | head -1 )
-book_m=$(stat -f '%m' docs-book/_book/index.html 2>/dev/null || echo 0)
+book_m=$(stat -f '%m' docs-book/book/index.html 2>/dev/null || echo 0)
 if [ "${FORCE:-0}" != "1" ] && [ "$book_m" -gt 0 ] && [ "$book_m" -ge "$newest_src" ]; then
   echo "[quarto] 产物已是最新, 跳过渲染 (FORCE=1 可强制)"
 else
@@ -49,11 +49,20 @@ else
   (cd docs-book && "$QUARTO_BIN" render >/dev/null)
 fi
 
+# ---- 3.5 组装: landing -> index.html (quarto 会删根下 index.html, 构建后重新落位) ----
+cp docs-book/landing.html docs-book/index.html
+
 # ---- 4. 产物验证 -----------------------------------------------------------
 python3 - <<'EOF'
 import glob, os, re, sys
 
-pages = sorted(glob.glob("docs-book/_book/*.html"))
+if not os.path.exists("docs-book/index.html"):
+    fail.append("landing index.html 缺失 (组装步骤未执行?)")
+for path in re.findall(r'(?:src|href)="(book/[^"]*)"', open("docs-book/index.html").read()):
+    if not os.path.exists(os.path.join("docs-book", path)):
+        fail.append(f"landing 引用缺失: {path}")
+
+pages = sorted(glob.glob("docs-book/book/*.html"))
 fail = []
 
 if len(pages) < 9:
@@ -67,17 +76,17 @@ for f in pages:
     if any("katex@" in u or "polyfill" in u or "mathjax" in u for u in ext):
         fail.append(f"{name}: 仍引用数学 CDN: {ext[:2]}")
     for m in set(re.findall(r'(?:src|href)="([^"]*katex[^"]*)"', html)):
-        if not os.path.exists(os.path.join("docs-book/_book", m)):
+        if not os.path.exists(os.path.join("docs-book/book", m)):
             fail.append(f"{name}: katex 资源缺失 {m}")
 
 # 源码 include 已嵌入 (02 章类型骨架 / 03 章 lift 与 const 核心片段)
 for page, mark in [("02-value-centric", "__slots__"), ("03-dsl", "wrapped")]:
-    if mark not in open(f"docs-book/_book/{page}.html").read():
+    if mark not in open(f"docs-book/book/{page}.html").read():
         fail.append(f"{page}: 核心代码片段缺失")
 
 # GitHub 源码链接存在
 for page in ("02-value-centric", "03-dsl"):
-    if "dontreadthisline/tinyautograd/blob/main" not in open(f"docs-book/_book/{page}.html").read():
+    if "dontreadthisline/tinyautograd/blob/main" not in open(f"docs-book/book/{page}.html").read():
         fail.append(f"{page}: GitHub 源码链接缺失")
 
 if fail:
@@ -88,4 +97,4 @@ if fail:
 print(f"[验证] {len(pages)} 页 | 零外网数学 CDN | katex 资源随书 | 源码 include 已展开")
 EOF
 
-echo "构建完成: $(pwd)/docs-book/_book/index.html"
+echo "构建完成: $(pwd)/docs-book/book/index.html"

@@ -4,7 +4,7 @@ __pycache__/
 *.pyc
 
 # 书构建产物
-docs-book/_book/
+docs-book/book/
 docs-book/.quarto/
 
 # 系统杂项

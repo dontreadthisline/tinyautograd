@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # serve-docs.sh — 固定端口托管已构建的书 (幂等, 秒级)
 #
-# 静态托管 _book: 不重复渲染 (渲染是 build-docs.sh 的职责)。
+# 静态托管 docs-book: 不重复渲染 (渲染是 build-docs.sh 的职责)。
 # 需要自动重渲染的交互场景请用 `just preview` (quarto preview, 前台)。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -9,8 +9,8 @@ cd "$(dirname "$0")/.."
 PORT="${DOCS_PORT:-4866}"
 URL="http://localhost:$PORT"
 
-if ! [ -f docs-book/_book/index.html ]; then
-  echo "[serve] _book 不存在, 先构建 ..." >&2
+if ! [ -f docs-book/index.html ]; then
+  echo "[serve] docs-book 不存在, 先构建 ..." >&2
   ./scripts/build-docs.sh
 fi
 
@@ -26,7 +26,7 @@ if lsof -iTCP:"$PORT" -sTCP:LISTEN -P -n >/dev/null 2>&1; then
   exit 1
 fi
 
-nohup python3 scripts/serve-docs.py "$PORT" docs-book/_book \
+nohup python3 scripts/serve-docs.py "$PORT" docs-book \
   > /tmp/tinyautograd-docs-serve.log 2>&1 &
 
 for _ in $(seq 1 10); do

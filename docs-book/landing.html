@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tinyautograd — 最小自动微分框架的设计</title>
+<meta name="description" content="从链式法则的数学形式, 走到计算图、DSL、Python 接口、惰性求值与类型签名。一本自包含的设计之书。">
+<style>
+:root {
+  --ia-accent: #3a4aa8; --ia-accent-deep: #2c3a8c; --ia-border: rgba(58,74,168,.16);
+  --ia-panel: #edf0f8; --bg: #faf9f6; --panel: #fff; --border: #ddd8ce;
+  --leaf: #0969da; --op: #8250df; --grad: #1a7f37; --amber: #bf8700;
+  --dim: #6e7781; --text: #24292f;
+  --mono: ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;
+  --sans: -apple-system,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.75; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+a { color: var(--ia-accent); text-decoration: none; } a:hover { color: var(--ia-accent-deep); }
+nav { display: flex; align-items: center; gap: 18px; padding: 16px 0; }
+nav .brand { font: 600 15px var(--mono); color: var(--text); }
+nav .brand b { color: var(--ia-accent); }
+nav .links { margin-left: auto; display: flex; gap: 16px; font-size: 13.5px; }
+nav .links a { color: var(--dim); } nav .links a:hover { color: var(--ia-accent); }
+.hero { text-align: center; padding: 64px 0 40px;
+  background: radial-gradient(circle at 1px 1px, #e7e3da 1px, transparent 0) 0 0/26px 26px; }
+.hero h1 { font-size: 44px; letter-spacing: -0.5px; color: var(--text); }
+.hero h1 .accent { color: var(--ia-accent); }
+.hero .sub { margin-top: 10px; font-size: 17px; color: var(--dim); }
+.hero .isomorph { margin: 26px auto 0; max-width: 560px; font-size: 14.5px; color: var(--text);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 18px;
+  box-shadow: 0 1px 4px rgba(36,41,47,.06); }
+.hero .isomorph b { color: var(--ia-accent); }
+.hero .cta { margin-top: 30px; display: flex; gap: 14px; justify-content: center; }
+.btn { font: 500 14px var(--sans); padding: 10px 26px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--ia-accent); transition: all .2s; display: inline-block; }
+.btn.primary { background: var(--ia-accent); color: #fff; }
+.btn.primary:hover { background: var(--ia-accent-deep); border-color: var(--ia-accent-deep); }
+.btn.ghost { background: var(--panel); color: var(--ia-accent); }
+.btn.ghost:hover { background: var(--ia-panel); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin: 36px 0 12px; }
+@media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 1px 5px rgba(36,41,47,.07); transition: box-shadow .25s, transform .25s; }
+.card:hover { box-shadow: 0 4px 16px rgba(36,41,47,.12); transform: translateY(-2px); }
+.card .head { display: flex; align-items: baseline; gap: 10px; padding: 14px 20px 4px; }
+.card .head .idx { font: 700 13px var(--mono); color: #b7b1a6; }
+.card .head .t { font-weight: 600; font-size: 15.5px; }
+.card .head .view { margin-left: auto; font: 12px var(--mono); color: var(--dim); }
+.card .head .view a { color: var(--ia-accent); font-weight: 500; }
+.card .body { padding: 10px 20px 18px; display: flex; align-items: center; justify-content: center; min-height: 250px;
+  background: radial-gradient(circle at 1px 1px, #efede7 1px, transparent 0) 0 0/26px 26px; }
+.card .cap { font-size: 12.5px; color: var(--dim); text-align: center; padding: 0 20px 14px; }
+.card .cap code { font: 11.5px var(--mono); color: var(--ia-accent); }
+.net-svg text { font: 10px var(--mono); fill: var(--dim); }
+.net-svg circle { stroke-width: 1.6; }
+.net-svg .link { stroke: rgba(58,74,168,.22); stroke-width: 1; }
+.net-svg .l1 { fill: #e8f1fc; stroke: var(--leaf); }
+.net-svg .l2 { fill: #f1ecfb; stroke: var(--op); }
+.net-svg .l3 { fill: #e9f5ec; stroke: var(--grad); }
+.formula { font-size: 17px; color: var(--text); }
+.cg-viewport { width: 430px; height: 140px; overflow: hidden; position: relative; }
+.cg-viewport .comp-graph { transform: scale(.477); transform-origin: 0 0; }
+.codebox { font: 12.5px/1.75 var(--mono); text-align: left; white-space: pre; }
+.codebox .k { color: #cf222e; } .codebox .f { color: var(--op); font-weight: 600; }
+.codebox .s { color: #0a3069; } .codebox .c { color: var(--dim); }
+.codebox .n { color: #0550ae; }
+.parts { display: flex; gap: 22px; margin: 26px 0 8px; }
+@media (max-width: 860px) { .parts { flex-direction: column; } }
+.part { flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 22px; }
+.part .pt { font: 600 12px var(--mono); color: var(--ia-accent); letter-spacing: 1px; }
+.part h3 { font-size: 15px; margin: 6px 0 8px; }
+.part p { font-size: 13px; color: var(--dim); }
+.part .ch { margin-top: 8px; font-size: 12.5px; color: var(--dim); }
+.part .ch b { color: var(--text); font-weight: 600; }
+footer { margin-top: 44px; padding: 22px 0 34px; border-top: 1px solid var(--border);
+  font-size: 12.5px; color: var(--dim); display: flex; gap: 18px; align-items: center; }
+footer .sp { margin-left: auto; font-family: var(--mono); }
+</style>
+<link rel="stylesheet" href="book/resources/libs/katex/katex.min.css">
+<script defer src="book/resources/libs/katex/katex.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="brand">tiny<b>autograd</b></div>
+  <div class="links">
+    <a href="book/index.html">开始阅读</a>
+    <a href="https://github.com/dontreadthisline/tinyautograd">GitHub</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <h1>tiny<span class="accent">autograd</span></h1>
+  <div class="sub">最小自动微分框架的设计 —— 从链式法则到 Python 接口</div>
+  <div class="isomorph">同一个神经网络，<b>四种表示</b>。前三章逐次切换视角，后四章把它做成真实框架——<br>每章一个事实，每章一次「数学结构 → 工程决策」的翻译。</div>
+  <div class="cta">
+    <a class="btn primary" href="book/index.html">开始阅读</a>
+    <a class="btn ghost" href="https://github.com/dontreadthisline/tinyautograd">查看源码</a>
+  </div>
+</header>
+
+<section class="grid">
+  <div class="card">
+    <div class="head"><span class="idx">01</span><span class="t">神经网络</span><span class="view">工程视角 · <a href="book/01-chain-rule.html">第 1 章</a></span></div>
+    <div class="body"><svg class="net-svg" width="360" height="230" viewBox="0 0 360 230">
+      <g id="netlinks"></g>
+      <g id="netnodes"></g>
+      <text x="52" y="222" text-anchor="middle">x (4,3)</text>
+      <text x="180" y="222" text-anchor="middle">h (4,5)</text>
+      <text x="308" y="222" text-anchor="middle">o (4,4)</text>
+      <text x="180" y="14" text-anchor="middle" style="fill:#8a8578">W₁ (3,5) · b₁ (5,) — W₂ (5,4) · b₂ (4,)</text>
+    </svg></div>
+    <div class="cap">层与模块只是复合的人为切分 —— 数学上它们不存在</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="idx">02</span><span class="t">函数</span><span class="view">数学视角 · <a href="book/01-chain-rule.html">第 1 章</a></span></div>
+    <div class="body"><div class="formula" id="fx"></div></div>
+    <div class="cap">链式法则的工程形式：VJP（向量-Jacobian 积），Jacobian 从不物化</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="idx">03</span><span class="t">计算图</span><span class="view">图视角 · <a href="book/02-value-centric.html">第 2 章</a></span></div>
+    <div class="body"><div class="cg-viewport" id="landing-cg"></div></div>
+    <div class="cap">值 = 图节点 = 线性映射载体（页面加载即演示前向建图）</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="idx">04</span><span class="t">DSL</span><span class="view">语言视角 · <a href="book/03-dsl.html">第 3 章</a></span></div>
+    <div class="body"><div class="codebox"><span class="k">def</span> <span class="f">loss_fn</span>(params, x, y):
+    h = <span class="f">ops.relu</span>(x @ params[<span class="s">"W1"</span>] + params[<span class="s">"b1"</span>])
+    o = h @ params[<span class="s">"W2"</span>] + params[<span class="s">"b2"</span>]
+    <span class="k">return</span> <span class="f">ops.mean</span>((o - y) ** <span class="n">2</span>)
+
+loss, grads = <span class="f">value_and_grad</span>(loss_fn)(params, x, y)
+params = {k: v - lr * g <span class="k">for</span> k, (v, g) <span class="k">in</span> …}  <span class="c"># 更新在 DSL 外</span></div></div>
+    <div class="cap">征用 Python 子集为 DSL：<code>lift</code> 扩展算子，<code>const</code> 造常量与随机源</div>
+  </div>
+</section>
+
+<section class="parts">
+  <div class="part">
+    <div class="pt">PART I · 表示</div>
+    <h3>同一个网络的三次视角切换</h3>
+    <p>函数（链式法则与 VJP）→ 计算图（值中心表示）→ DSL（lift 与 const）</p>
+    <div class="ch"><b>1</b> 链式法则与 VJP · <b>2</b> 值中心表示 · <b>3</b> DSL</div>
+  </div>
+  <div class="part">
+    <div class="pt">PART II · 实现</div>
+    <h3>从图到运行的工程</h3>
+    <p>接口（API 面由什么决定）→ 惰性求值（图如何变成计算）→ 图的寿命（性能与正确性）→ 类型（DSL 的静态辅助）</p>
+    <div class="ch"><b>4</b> 接口设计 · <b>5</b> 惰性求值 · <b>6</b> 图的寿命 · <b>7</b> 类型系统</div>
+  </div>
+</section>
+
+<footer>
+  <span>tinyautograd · 约 600 行 Python 之上的设计之书</span>
+  <span>25 个测试 · 全程离线构建</span>
+  <span class="sp">MLX · Quarto · KaTeX</span>
+</footer>
+</div>
+
+<script>
+/* 格1: 网络图 (3-5-4 全连接) */
+(function () {
+  var L = [3, 5, 4], xs = [52, 180, 308], links = "", nodes = "";
+  function col(i) { var n = L[i], out = []; for (var j = 0; j < n; j++) out.push(40 + j * (150 / (n - 1))); return out; }
+  var C = [col(0), col(1), col(2)], cls = ["l1", "l2", "l3"];
+  for (var a = 0; a < 2; a++)
+    C[a].forEach(function (y1) { C[a + 1].forEach(function (y2) {
+      links += '<line class="link" x1="' + (xs[a] + 10) + '" y1="' + y1 + '" x2="' + (xs[a + 1] - 10) + '" y2="' + y2 + '"/>'; }); });
+  for (var i = 0; i < 3; i++)
+    C[i].forEach(function (y) { nodes += '<circle class="' + cls[i] + '" cx="' + xs[i] + '" cy="' + y + '" r="10"/>'; });
+  document.getElementById("netlinks").innerHTML = links;
+  document.getElementById("netnodes").innerHTML = nodes;
+})();
+
+/* 格2: 公式 (本地 KaTeX) */
+window.addEventListener('DOMContentLoaded', function () {
+  katex.render(String.raw`\begin{aligned} h &= \operatorname{relu}(x\,W_1 + b_1) \\ o &= h\,W_2 + b_2 \\ L &= \operatorname{mean}\big((o - y)^2\big) \end{aligned}`,
+    document.getElementById('fx'), { displayMode: true, throwOnError: false });
+});
+
+/* 格3: 计算图 (内联组件, 自动前向) */
+(function () {
+  var host = document.getElementById('landing-cg');
+  var wrap = document.createElement('div'); wrap.className = 'comp-graph'; wrap.id = 'mlp-graph';
+  var css = '<style>'
+    + '.comp-graph .cg-wrap { position: relative; width: 880px; height: 264px; background-color: #fff; border-radius: 8px; }'
+    + '.comp-graph .cg-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; }'
+    + '.cg-node { position: absolute; background: #fff; border: 1.5px solid #8250df; border-radius: 9px; padding: 6px 9px; min-width: 92px; text-align: center; white-space: nowrap; box-shadow: 0 1px 5px rgba(36,41,47,.10); transition: box-shadow .25s, border-color .25s, opacity .25s; }'
+    + '.cg-node.leaf { border-color: #0969da; }'
+    + '.cg-node.hide { opacity: 0; }'
+    + '.cg-node.show { opacity: 1; animation: lgpop .45s cubic-bezier(.2,1.4,.4,1); }'
+    + '@keyframes lgpop { 0% { transform: scale(.4); opacity: 0 } 100% { transform: scale(1); opacity: 1 } }'
+    + '.cg-node .nm { font: 600 12px/1.3 ui-monospace,monospace; color: #8250df; }'
+    + '.cg-node.leaf .nm { color: #0969da; }'
+    + '.cg-node .mt { font: 9.5px/1.35 ui-monospace,monospace; color: #6e7781; }'
+    + '.cg-node.visiting { border-color: #bf8700; box-shadow: 0 0 0 4px rgba(191,135,0,.18); }'
+    + '.cg-node.done { box-shadow: 0 0 0 3px rgba(26,127,55,.14); }'
+    + '.cg-edge path { stroke: #a49b8e; stroke-width: 1.6; fill: none; transition: stroke .3s, stroke-width .3s; }'
+    + '.cg-edge.fwd path { stroke: #bf8700; stroke-width: 2.4; }'
+    + '</style>';
+  var N = [
+    ['x','leaf',20,26],['mm1','',146,26],['z1','',272,26],['h','',398,26],['mm2','',524,26],['o','',650,26],['L','',776,26],
+    ['W1','leaf',146,172],['b1','leaf',272,172],['W2','leaf',524,172],['b2','leaf',650,172],['y','leaf',776,172]
+  ];
+  var names = { x:'x', mm1:'matmul', z1:'add', h:'relu', mm2:'matmul', o:'add', L:'mean' };
+  var metas = { mm1:'inputs=[x,W1]', z1:'inputs=[mm1,b1]', h:'maximum(z1,0)', mm2:'inputs=[h,W2]', o:'inputs=[mm2,b2]', L:'标量 · 根' };
+  var html = css + '<div class="cg-wrap"><svg viewBox="0 0 880 264"></svg>';
+  N.forEach(function (n) {
+    html += '<div class="cg-node ' + n[1] + '" id="cgn-' + n[0] + '" style="left:' + n[2] + 'px;top:' + n[3] + 'px"><div class="nm">' + (names[n[0]] || n[0]) + '</div><div class="mt">' + (metas[n[0]] || '') + '</div></div>';
+  });
+  html += '</div>';
+  wrap.innerHTML = html;
+  host.appendChild(wrap);
+  var edges = [['x','mm1'],['W1','mm1'],['mm1','z1'],['b1','z1'],['z1','h'],['h','mm2'],['W2','mm2'],['mm2','o'],['b2','o'],['o','L'],['y','L']];
+  var svg = wrap.querySelector('svg'), NS = 'http://www.w3.org/2000/svg';
+  edges.forEach(function (e) {
+    var a = document.getElementById('cgn-' + e[0]), b = document.getElementById('cgn-' + e[1]);
+    var ax = parseFloat(a.style.left), ay = parseFloat(a.style.top), bx = parseFloat(b.style.left), by = parseFloat(b.style.top);
+    var g = document.createElementNS(NS, 'g'); g.setAttribute('class', 'cg-edge'); g.id = 'cge-' + e[0] + '-' + e[1];
+    var p = document.createElementNS(NS, 'path');
+    var up = by > ay, x1, y1, x2, y2;
+    if (up) { x1 = ax + 46; y1 = ay; x2 = bx + 46; y2 = by; } else { x1 = ax + 92; y1 = ay + 27; x2 = bx; y2 = by + 27; }
+    var mx = up ? x1 : (x1 + x2) / 2;
+    p.setAttribute('d', 'M ' + x1 + ' ' + y1 + ' C ' + mx + ' ' + y1 + ', ' + mx + ' ' + y2 + ', ' + x2 + ' ' + y2);
+    g.appendChild(p); svg.appendChild(g);
+  });
+  var fwdOrder = ['x','W1','b1','W2','b2','y','mm1','z1','h','mm2','o','L'];
+  setTimeout(function () {
+    document.querySelectorAll('#mlp-graph .cg-node').forEach(function (n) { n.classList.add('hide'); });
+    fwdOrder.forEach(function (id, i) {
+      setTimeout(function () {
+        var n = document.getElementById('cgn-' + id);
+        n.classList.remove('hide'); n.classList.add('show'); n.classList.add('visiting');
+        edges.forEach(function (e) { if (e[1] === id) { var g = document.getElementById('cge-' + e[0] + '-' + e[1]); if (g) g.classList.add('fwd'); } });
+        setTimeout(function () { n.classList.remove('visiting'); n.classList.add('done'); }, 300);
+      }, i * 230);
+    });
+  }, 900);
+})();
+</script>
+</body>
+</html>
