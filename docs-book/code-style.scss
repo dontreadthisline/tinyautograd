@@ -1,0 +1,40 @@
+/* code-style.scss — 代码块样式适配 (项目层, 追加于 indigo-atlas 主题之后)
+ *
+ * 不修改 _extensions/ 下的主题文件: 那是 quarto add 的领地,
+ * 重装或升级扩展会被覆盖。Quarto 会把扩展 theme 与本项目 theme 合并,
+ * 本文件声明在后, 可安全覆盖/补充。
+ */
+
+/*-- scss:rules --*/
+
+/* 块级代码: 靛蓝左缘线 + 淡靛底, 与主题 --ia-* 变量同源 */
+div.sourceCode {
+  background: #fbfcfe;
+  border: 1px solid var(--ia-border);
+  border-left: 3px solid var(--ia-accent);
+  border-radius: 6px;
+}
+
+/* 行内代码: 靛灰底 pill, 与正文区分 */
+p code:not([class^="sourceCode"]),
+li code:not([class^="sourceCode"]),
+td code:not([class^="sourceCode"]),
+dd code:not([class^="sourceCode"]) {
+  background: var(--ia-panel);
+  border: 1px solid var(--ia-border);
+  border-radius: 4px;
+  padding: 0.08em 0.35em;
+  font-size: 0.87em;
+  font-family: var(--gen-font-mono);
+}
+
+/* callout 内的行内代码继承面板底色时, 保持可读 */
+.callout code:not([class^="sourceCode"]) {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+/* 代码块内字号微调 (长 include 的 Python 源码) */
+pre.sourceCode {
+  font-size: 0.85em;
+  line-height: 1.55;
+}

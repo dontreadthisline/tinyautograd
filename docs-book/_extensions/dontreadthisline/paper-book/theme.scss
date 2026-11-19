@@ -1,0 +1,79 @@
+// Paper Book 主题：journal 底座 + 全衬线正文，最接近纸面书页的观感。
+// 结构与 genesis-book 同构（theme.scss + _typography.scss + sidebar-toggle.html），
+// 差异只在底座选择、字体取向与细节密度。
+
+// 通用排版层（本目录内拷贝，保持扩展自包含；源头见 genesis-book 版注释）
+@import 'typography';
+
+/*-- scss:defaults --*/
+$font-family-serif: "Noto Serif SC", "Songti SC", "STSong", "Source Han Serif SC", serif;
+$font-family-sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+
+/*-- scss:rules --*/
+
+// 正文：衬线（纸书取向），行高略收
+body {
+  font-family: $font-family-serif;
+  line-height: 1.75;
+}
+
+// 代码/表格保持无衬线（可读性）
+code, pre, table {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+table { font-family: $font-family-sans; }
+
+// 标题：同衬线但加重
+h1, h2, h3, h4 { font-weight: 700; }
+h2 { margin-top: 2.0em; }
+
+main.content {
+  max-width: 44rem;
+  padding-left: 2rem;
+  padding-right: 2rem;
+}
+
+// 桌面导航态：三栏接管 —— 目录贴左缘、TOC 贴右缘、正文居中保 44rem 行长
+@media (min-width: 992px) {
+  :root { --gen-col: 250px; }   // 三栏列宽单一来源：把手与阅读态退场位移均取此值
+  #quarto-content {
+    grid-template-columns: var(--gen-col) minmax(0, 1fr) var(--gen-col) !important;
+  }
+  #quarto-sidebar {
+    grid-column: 1 !important;
+    margin-left: 0 !important;
+    width: auto !important;
+    padding: 0 18px 2rem 24px !important;
+    background-color: #f7f5f0;
+    border-right: 1px solid rgba(0, 0, 0, 0.1);
+  }
+  .dark #quarto-sidebar {
+    background-color: #1a1917;
+    border-right-color: rgba(255, 255, 255, 0.09);
+  }
+  #quarto-margin-sidebar {
+    grid-column: 3 !important;
+    margin-right: 0 !important;
+    width: auto !important;
+    padding-right: 24px;
+  }
+  #quarto-content > main.content,
+  #quarto-content > .page-navigation,
+  #quarto-content > #quarto-sidebar-glass {
+    grid-column: 2 !important;
+    justify-self: center;
+    width: 100%;
+    max-width: 44rem !important;
+  }
+}
+#quarto-sidebar {
+  font-size: 0.9em;
+  .sidebar-item-section > .sidebar-item-container .sidebar-item-text {
+    font-family: $font-family-serif;
+    font-weight: 600;
+  }
+}
+
+ul.task-list li {
+  margin: 0.3em 0;
+}

@@ -1,0 +1,11 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# 书构建产物
+docs-book/_book/
+docs-book/.quarto/
+
+# 系统杂项
+.DS_Store

@@ -1,0 +1,71 @@
+# 类型系统 {#sec-types}
+
+tinyautograd 只有一千行不到，却用上了 Python 3.12+ 类型系统的几件新装备。这不是炫技——每一处类型都在固定一份契约，而契约的位置决定错误暴露的时机（第 4 章的教训）。本章逐处过一遍，说明"为什么偏偏是这一个类型工具"。
+
+::: {.callout-important title="本章问题"}
+哪些框架契约适合用类型表达（编辑期/静态检查期暴露错误），哪些必须留给运行时（`isinstance`/测试）？分界线画在哪里？
+:::
+
+## 7.1 PEP 695
+
+```python
+type Array = mx.array                    # tensor.py
+type PyTree[T] = T | list[PyTree[T]] | tuple[PyTree[T], ...] | dict[str, PyTree[T]]
+```
+
+`type` 语句（Python 3.12）是惰性求值的类型别名——它只在类型检查器眼里展开，运行时零成本。`PyTree[T]` 是**递归泛型别名**：旧式 `TypeVar` 写法要三行，PEP 695 一行且作用域干净。它固定的契约是：**参数与梯度同构**（`value_and_grad` 返回的 grads 树就是 args 树的形状替换）——pytree 模块的全部意义。
+
+变换 API 用的是 PEP 695 的**参数化函数**语法：
+
+```python
+def value_and_grad[**P](
+    fun: Callable[P, Tensor], argnums: int | tuple[int, ...] = 0,
+) -> Callable[P, tuple[Tensor, Any]]: ...
+```
+
+`[**P]` 是 `ParamSpec`——"把被包装函数的签名原样传递给包装结果"。类型检查器因此知道 `value_and_grad(loss_fn)` 接受 `(params, x, y)` 而不是别的——变换保持被变换者的形状，这一契约在数学上就是"算子提升"（第 3 章 `lift` 的类型层对应物）。
+
+## 7.2 变换是自函子
+
+变换的类型是 $\texttt{Callable} \to \texttt{Callable}$：定义域与值域相同，类型封闭。这不是实现便利而是设计声明——**类型封闭性正是可组合性的表述**：
+
+$$
+\texttt{grad} \circ \texttt{grad} \;:\; \texttt{Callable} \to \texttt{Callable} \quad \text{(高阶导的天然入口)}
+$$
+
+数学上，变换集合在复合下封闭，即一个自函子范畴；工程上，这意味着将来引入高阶导（`grad(grad(f))`）不需要新的类型通道——当前范围决策不做高阶导，但类型层已把门留好。与之配套的是第 1 章的结论：余切与原值同型（$\mathbb{R}^n$ 的对偶同构于 $\mathbb{R}^n$），所以 `vjp` 的输出与输入同属 `PyTree[Tensor]`——变换链上流动的值的类型也封闭。
+
+类型决策还有两条值得记录：**D3**（不做静态 DSL 检查——类型标注为文档与开发体验，不当硬约束）与 **T1**（dtype 不做泛型参数——不可导靠运行时屏障，留将来静态化升级路径）。它们共同划定了公理 D 的"弱形式"：类型是边界的声明，不是边界的执行。
+
+## 7.3 Protocol 的进与退
+
+早期版本有一个 `backend/protocols.py`，用 `@runtime_checkable` 的 `Protocol` 定义 `ArrayLike`（框架对底层数组的全部需求：`shape/dtype/item/tolist/__getitem__`）与 `Backend`（含 `ops_table: dict[str, ArrayFn]`）。Protocol 的价值是**结构化类型**：不继承、只看形状，`isinstance` 可检——替换后端 = 提供一个形状匹配的对象。
+
+多后端退役后（第 4 章），这层协议随之删除。留下的经验值得记录：
+
+- Protocol 表达的是**向内的需求**（"谁能当我底层数组"），与 NumPy `__array__` 这类**向外的供给**协议恰好成对（第 4 章）——单后端下需求侧收缩为一句 `type Array = mx.array`，供给侧（`__array__`）反而成为未来更值得补的方向。
+- `Array` 在 `Op`/`ArrayFn` 的标注里最终放宽为 `Any`——nanobind 生成物与结构化协议的匹配存在真实的工具链摩擦。**类型系统的诚实边界**：当契约无法可靠静态表达时，宁要显式的 `Any` + 运行时测试，不要自欺的精确标注。
+
+## 7.4 结构的最小声明
+
+`Tensor.__slots__ = ("_array", "inputs", "op", "index")` 把值对象钉死在四个槽上——没有 `__dict__`，属性拼错当场报错（`t.input` 而非 `t.inputs` 是教学场景高频错误）。`Op` 是 `NamedTuple`：不可变、可解包、有默认值——`outputs: tuple = ()` 让单输出算子的构造省一项。两者共同把"图的形状"（值 + 三元组元数据）在类型层钉死：**图上不可能出现第五个成员，Op 不可能在建边后被篡改**。
+
+## 7.5 分界线
+
+| 契约 | 表达方式 | 暴露时机 |
+|---|---|---|
+| 参数树与梯度树同构 | `PyTree[T]` 泛型 + `substitute` | 类型检查期 |
+| 变换保持被变换者签名 | `ParamSpec` | 类型检查期 |
+| 图节点结构固定 | `__slots__`/`NamedTuple` | 运行时即刻 |
+| 标量可参与算子（`2 * t`） | `wrap` + 运算符重载 | 运行时（测试覆盖） |
+| `fn` 的 VJP 可求 | 无法静态表达 | 运行时（MLX 层的契约） |
+
+::: {.callout-important title="本章要点"}
+类型系统回答"结构是否成立"，运行时回答"行为是否正确"。tinyautograd 的分配是：结构契约（树的形状、签名的传递、节点的字段）交给 PEP 695 与 `__slots__`，让错误死在编辑器里；行为契约（梯度的数值正确性）交给 25 个测试，让错误死在 CI 里。两者的分界就是"能否在不执行的情况下判定"。
+:::
+
+::: {.callout-caution title="练习"}
+1. 给 `vjp` 写 PEP 695 签名，使类型检查器能推断 `vjp(f, x, cotan)` 的返回类型是 `tuple[Tensor, Tensor]`。`fun` 返回 `PyTree[Tensor]` 的情形如何标注？
+2. `Tensor.numpy()` 返回 `object`。结合第 4 章 `__array__` 协议，把返回类型收紧到 `np.ndarray`，并说明为什么 `Tensor` 的 `__array__` 实现里不需要 `numpy()` 的这层包装。
+3. 用 `TypeGuard`（PEP 647）给 `pytree.flatten` 的输入写一个 `is_pytree(x)` 判定函数，使类型缩小在 `if is_pytree(t):` 分支内生效。
+:::

@@ -1,0 +1,27 @@
+project:
+  type: book
+  resources: [resources]
+
+book:
+  title: "tinyautograd"
+  subtitle: "最小自动微分框架的设计 — 从数学到 Python 接口"
+  description: "以约六百行 Python 为界, 从链式法则的数学形式出发, 走过 DSL、API、惰性求值与类型系统, 构建一个可用的最小 autograd 框架。"
+  page-navigation: true
+  chapters:
+    - index.qmd
+    - conventions.qmd
+    - 01-chain-rule.qmd
+    - 02-value-centric.qmd
+    - 03-dsl.qmd
+    - 04-api.qmd
+    - 05-graph-lifetime.qmd
+    - 06-lazy.qmd
+    - 07-types.qmd
+
+format:
+  indigo-atlas-html:
+    theme: [code-style.scss]
+    code-copy: true
+    html-math-method:
+      method: katex
+      url: "resources/libs/katex/"

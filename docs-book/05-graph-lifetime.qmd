@@ -1,0 +1,64 @@
+# 图的寿命 {#sec-graph-lifetime}
+
+同一个意图——"这段计算我不需要梯度"——在 PyTorch 里是用户必写的 `torch.no_grad()`，在 MLX 里根本不存在对应的 API，在 JAX 里这个问题本身不成立。本章解释这个分歧的根源：不在 API 设计的品味，而在**图的寿命由谁终结**。
+
+::: {.callout-important title="本章问题"}
+`no_grad` 是 autograd 框架的必需品吗？什么条件下它可以（应该）从公开 API 中消失？
+:::
+
+## 5.1 三家坐标系
+
+| | 图何时建 | 图何时死 | 推理时防图堆积靠 |
+|---|---|---|---|
+| PyTorch | 算子即建（急切） | `backward()` 后释放 | 用户声明 `no_grad` |
+| JAX | 仅 `grad` 追踪期间 | tracer 作用域结束 | 平时根本没有图 |
+| MLX | 算子即建（惰性） | **求值即断链** | 框架默认策略 |
+| tinyautograd | 算子即建（默认建边） | Python 引用回收 | 用户声明 `no_grad` |
+
+PyTorch 急切求值，没有"求值完成"的时刻可以挂钩，框架无法自动判断"这个 tensor 以后还要不要梯度"——意图无处自动对齐，只能让用户声明。JAX 把图的作用域缩到一次追踪，普通调用零图开销，"不要图"是缺省。MLX 最有意思：图是惰性建的，但**求值回调里框架主动断链**——MLX 源码（`mlx/transforms.cpp`，scheduler 求值完成处）：
+
+```cpp
+arr.set_status(array::Status::evaluated);
+if (!arr.is_tracer()) {
+    arr.detach();   // 清空 primitive + inputs, 图节点当场断链
+}
+```
+
+用户从不声明"我不要梯度"；框架按"求值过没有 + 是不是 tracer"自动分诊——推理时 `mx.eval(out)` 一执行，图就死了；训练时 `grad` 内部的数组标记为 tracer，豁免断链。**`no_grad` 的内存职能被求值即断链的默认策略替代了。**
+
+## 5.2 图随引用存活
+
+tinyautograd 的 `eval()` 只物化 `_array`，`t.op`/`t.inputs` 原样保留——实验验证：
+
+```python
+t = Tensor([1.0]) + Tensor([2.0])
+eval(t)
+assert t.op is not None and t.inputs   # 图原封不动
+```
+
+图的死期 = 最后一个 Python 引用消失。推理场景下用户持有输出 Tensor，就捏着整条链：每个中间值、每个 `Op` 都活着。**这是"图跨语句存活"表示法的固有代价**——与 PyTorch 同阵营，所以 `no_grad` 必须公开：它是把"我不需要图"这个无处自动对齐的意图显式化的唯一通道。
+
+理论上存在对齐 MLX 的路线：在 `eval()` 里加断链（`t.op, t.inputs = None, ()`），`no_grad` 随之退休。但这会继承 MLX 的 sharp edge——**用户在目标函数内部手动 `eval` 中间值 = 图提前截断 = 梯度静默算错**。tinyautograd 选择了更钝但更教学友好的形态：图长寿（可随时内省、可对已有输出反传 `vjp`），代价由 `no_grad` 显式管理。错误的形态从"静默算错"（不可见）变成"占内存"（可见）——教学框架宁要可见的浪费。
+
+## 5.3 detach 是语义孔
+
+第 4 章已定位 `detach` 是语义孔，本章补足它与 `no_grad` 的正交性：
+
+- `no_grad` 作用于**之后**的算子调用（不建边）——**作用域**语义，影响图的构成。
+- `detach(t)` 作用于**这个**值（同值无父的新 Tensor）——**子表达式**语义，改写导数定义。
+
+$$
+\frac{\partial}{\partial x}\Big[\operatorname{sum}\big(\operatorname{exp}(\operatorname{detach}(x)) \cdot x\big)\Big] = \operatorname{exp}(\operatorname{detach}(x)) \quad (\ne 2\,\operatorname{exp}(x)\,x)
+$$
+
+测试 `test_autograd.py::test_no_grad_and_detach` 用这个例子同时验证两者：`no_grad` 块内的值是纯前向的（进不了反向引擎的 `reach`），`detach` 的值在图里但传导终止于它。任何表示法（PyTorch/JAX/MLX）都保留 stop-gradient 的等价物——因为它是**数学**，不是图管理。
+
+::: {.callout-important title="本章要点"}
+`no_grad` 不是 autograd 的公理，是"图跨语句存活 + 无自动断链时机"这种表示法的**衍生品**。判断它该不该存在于你的框架，只需问一个问题：推理产生的图，由谁负责弄死？框架负责（MLX 断链 / JAX 作用域）则 API 消失，用户负责（PyTorch / tinyautograd 引用持有）则 API 必须公开。API 面是表示法的投影。
+:::
+
+::: {.callout-caution title="练习"}
+1. 在 tinyautograd 里实现"求值即断链"版本 `eval2`（断链 + 保持 `vjp` 可用）。跑全部测试，指出哪些测试暴露了 sharp edge，为什么 MLX 源码需要 `is_tracer()` 豁免而你的 `eval2` 需要什么等价物？
+2. 证明：持有 loss 输出 Tensor 的训练循环（不 `del` 中间 loss）会导致第 $k$ 步时内存中有多少条历史链？`no_grad` 应该加在循环的什么位置才能止血？
+3. 讨论题：如果给 tinyautograd 加 `compile`（追踪 `f` 一次、重放多次），`random` 模块（每次调用重采样）会发生什么？给出三种处理方案及其语义后果。
+:::

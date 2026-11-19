@@ -1,0 +1,61 @@
+// 通用中文长文排版层 —— 零 SCSS 特有语法、零框架选择器。
+// 由本模块的 quarto-theme.scss @use 编译进主题；跨站复用时把本文件拷出、
+// 改后缀为 .css 直接引入即可（内容即纯 CSS）。
+
+/*-- scss:rules --*/
+:root {
+  --gen-font-serif: "Noto Serif SC", "Songti SC", "STSong", "Source Han Serif SC", serif;
+  --gen-font-sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --gen-font-mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+/* 正文 */
+body {
+  font-family: var(--gen-font-sans);
+  font-size: 1.02rem;
+  line-height: 1.85;
+  letter-spacing: 0.01em;
+}
+p { margin-bottom: 1.05em; }
+
+/* 标题：衬线，层级对比 */
+h1, h2, h3, h4 {
+  font-family: var(--gen-font-serif);
+  font-weight: 600;
+  line-height: 1.4;
+}
+h2 {
+  margin-top: 2.2em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* 表格：教材风（上下边框 + 细横线） */
+table {
+  font-size: 0.94em;
+  border-top: 2px solid rgba(0, 0, 0, 0.75);
+  border-bottom: 2px solid rgba(0, 0, 0, 0.75);
+}
+table th {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.35);
+  font-family: var(--gen-font-sans);
+}
+table td { border: none; }
+
+/* 代码 */
+pre, div.sourceCode {
+  font-size: 0.88em;
+  line-height: 1.55;
+  border-radius: 4px;
+}
+code { font-family: var(--gen-font-mono); font-size: 0.88em; }
+
+/* 公式：块级横向滚动，行内基线修正（MathJax SVG / KaTeX 通用） */
+.MathJax_Display, mjx-container[jax="SVG"][display="true"],
+.katex-display {
+  margin: 1.1em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
+mjx-container[jax="SVG"], .katex { vertical-align: -0.14em; }

@@ -1,0 +1,111 @@
+<!-- 侧栏收起（阅读模式）注入：抽屉把手式切换
+     展开态：把手吸附在左侧章节栏右缘（垂直居中，半透明竖条，hover 显形）
+     阅读态：把手贴视口左缘；隐藏两侧目录，正文居中为纯书页
+     交互：点击把手或按 [ 切换；localStorage 记忆；带滑动过渡 -->
+<style>
+  /* 把手/退场位移所用的目录列宽变量定义在各主题 theme.scss 的三栏 grid 处（单一来源） */
+
+  #gen-drawer-handle {
+    position: fixed; top: 50%; transform: translateY(-50%);
+    left: var(--gen-col, 250px);   // 与主题三栏 grid 的目录列宽同源，无 JS 测量
+    width: 16px; height: 64px;
+    border: none; border-radius: 0 8px 8px 0;
+    background: rgba(0, 0, 0, 0.05);
+    color: rgba(0, 0, 0, 0.35);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; cursor: pointer; user-select: none; z-index: 1500;
+    transition: left .3s ease, background .15s, color .15s;
+  }
+  #gen-drawer-handle:hover { background: rgba(0, 0, 0, 0.12); color: rgba(0,0,0,.6); }
+  .dark #gen-drawer-handle { background: rgba(255,255,255,.07); color: rgba(255,255,255,.4); }
+  .dark #gen-drawer-handle:hover { background: rgba(255,255,255,.16); color: rgba(255,255,255,.75); }
+
+  /* 窄屏：Quarto 自带移动侧栏机制接管，隐藏自定义把手 */
+  @media (max-width: 991.98px) { #gen-drawer-handle { display: none !important; } }
+
+  /* 过渡动画 */
+  #quarto-sidebar { transition: margin-left .3s ease, opacity .3s ease; }
+  #quarto-content { transition: grid-template-columns .3s ease; }
+
+  /* 阅读模式：三区布局 —— 窄左边距 + 正文(58rem) + 右侧本章小节导航，整体居中；
+     右导航复用 Quarto 原生 margin-sidebar（含 scroll-spy 高亮），重安置到留白区 */
+  body.gen-reading #gen-drawer-handle { left: 0; border-radius: 0 8px 8px 0; }
+  body.gen-reading #quarto-sidebar {
+    margin-left: calc(-1 * var(--gen-col, 250px)); opacity: 0; pointer-events: none;
+  }
+  body.gen-reading #quarto-content {
+    grid-template-columns: 2.5rem minmax(0, 58rem) clamp(12rem, 14vw, 15rem) 2.5rem !important;
+    justify-content: center;
+  }
+  body.gen-reading #quarto-content > * { grid-column: 2 !important; }
+  body.gen-reading #quarto-content > main.content { max-width: none !important; }
+  body.gen-reading #quarto-content > #quarto-margin-sidebar {
+    grid-column: 3 !important;
+    display: block !important;
+    opacity: 1 !important; visibility: visible !important;
+    width: auto !important; max-width: none !important;
+    max-height: 85vh; overflow-y: auto;
+    position: sticky; top: 1.5rem;
+    padding-left: 1.25rem;
+    font-size: 0.85em;
+    border-left: 1px solid rgba(0, 0, 0, 0.08);
+  }
+  .dark body.gen-reading #quarto-content > #quarto-margin-sidebar,
+  body.dark.gen-reading #quarto-content > #quarto-margin-sidebar { border-color: rgba(255,255,255,.1); }
+  body.gen-reading #quarto-sidebar-glass { display: none !important; }
+  body.gen-reading main.content > p,
+  body.gen-reading main.content > ul,
+  body.gen-reading main.content > ol,
+  body.gen-reading main.content > h1,
+  body.gen-reading main.content > h2,
+  body.gen-reading main.content > h3,
+  body.gen-reading main.content > h4,
+  body.gen-reading main.content > blockquote {
+    max-width: 44rem;
+  }
+  body.gen-reading main.content > table { width: 100%; }
+
+  /* 窄屏退回居中单栏（右导航放不下则隐藏） */
+  @media (max-width: 1199.98px) {
+    body.gen-reading #quarto-content { grid-template-columns: 1fr min(46rem, 92vw) 1fr !important; }
+    body.gen-reading #quarto-content > * { grid-column: 2 !important; }
+    body.gen-reading #quarto-content > #quarto-margin-sidebar { display: none !important; }
+  }
+</style>
+
+<script>
+  (function () {
+    var KEY = 'genesis-reading-mode';
+    // 尽早应用记忆状态，避免闪烁
+    if (localStorage.getItem(KEY) === '1') {
+      document.documentElement.classList.add('gen-reading');
+    }
+    function apply(on) {
+      document.body.classList.toggle('gen-reading', on);
+      document.documentElement.classList.toggle('gen-reading', on);
+      localStorage.setItem(KEY, on ? '1' : '0');
+    }
+    document.addEventListener('DOMContentLoaded', function () {
+      if (document.documentElement.classList.contains('gen-reading')) {
+        document.body.classList.add('gen-reading');
+      }
+      var handle = document.createElement('button');
+      handle.id = 'gen-drawer-handle';
+      handle.type = 'button';
+      handle.title = '切换阅读模式（隐藏两侧目录）快捷键 [';
+      handle.setAttribute('aria-label', '切换阅读模式');
+      handle.addEventListener('click', function () {
+        var on = !document.body.classList.contains('gen-reading');
+        apply(on);
+        handle.textContent = on ? '\u203A' : '\u2039';
+      });
+      document.body.appendChild(handle);
+      handle.textContent = document.body.classList.contains('gen-reading') ? '\u203A' : '\u2039';
+      document.addEventListener('keydown', function (e) {
+        if (e.key === '[' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+          handle.click();
+        }
+      });
+    });
+  })();
+</script>

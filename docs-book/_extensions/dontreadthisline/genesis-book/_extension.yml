@@ -1,0 +1,13 @@
+title: Genesis Book
+author: AI Project Genesis
+version: 0.1.0
+quarto-required: ">=1.4"
+contributes:
+  formats:
+    # Quarto 1.8 实测约定（项目内 _extensions/ 与外部 quarto add 行为一致）：
+    #   - 扩展目录 id 单级（本目录名 genesis-book 即扩展 id）
+    #   - 此处键必须写 base format 名（html）：Quarto 按 baseFormat 索引扩展默认值
+    #   - 使用方写 format: genesis-book-html（剥离 -html 定位本扩展）
+    html:
+      theme: [litera, theme.scss]
+      include-in-header: sidebar-toggle.html

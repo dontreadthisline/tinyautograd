@@ -1,0 +1,76 @@
+// Genesis 主题模块（Quarto 适配层，叠在 litera 上）
+//
+// 模块自包含：quarto-theme.scss（本文件）+ _typography.scss（通用排版，@import 并入编译）
+// + includes/sidebar-toggle.html（阅读模式注入，DOM 耦合 Quarto，故归属本模块）。
+// 使用方（scripts/gen-quarto-yml.py 生成的 _quarto.yml）只引用本模块路径；
+// 换主题 = 新建 themes/<name>/ 同构目录 + 生成器改一个变量。
+
+/*-- scss:defaults --*/
+$font-family-serif: "Noto Serif SC", "Songti SC", "STSong", "Source Han Serif SC", serif;
+$font-family-sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+$font-family-monospace: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+$h1-font-size: 1.9rem;
+$h2-font-size: 1.45rem;
+$h3-font-size: 1.18rem;
+
+/*-- scss:rules --*/
+
+// 正文主栏宽度：阅读行长控制（导航态）
+main.content {
+  max-width: 46rem;
+  padding-left: 2rem;
+  padding-right: 2rem;
+}
+
+// 桌面导航态：接管页面 grid 为标准三栏 —— 目录面板贴左缘、右 TOC 贴右缘、
+// 正文居中保 46rem 行长（两侧无死白，剩余空间作与正文列的呼吸 gap）
+@media (min-width: 992px) {
+  :root { --gen-col: 250px; }   // 三栏列宽单一来源：把手与阅读态退场位移均取此值
+  #quarto-content {
+    grid-template-columns: var(--gen-col) minmax(0, 1fr) var(--gen-col) !important;
+  }
+  #quarto-sidebar {
+    grid-column: 1 !important;
+    margin-left: 0 !important;
+    width: auto !important;
+    padding: 0 18px 2rem 24px !important;
+    background-color: #f6f7f8;
+    border-right: 1px solid rgba(0, 0, 0, 0.08);
+  }
+  .dark #quarto-sidebar {
+    background-color: #191b1e;
+    border-right-color: rgba(255, 255, 255, 0.09);
+  }
+  #quarto-margin-sidebar {
+    grid-column: 3 !important;
+    margin-right: 0 !important;
+    width: auto !important;
+    padding-right: 24px;
+  }
+  // 正文及同列元素（页脚上下章导航等）居中于中列，与正文列宽对齐
+  #quarto-content > main.content,
+  #quarto-content > .page-navigation,
+  #quarto-content > #quarto-sidebar-glass {
+    grid-column: 2 !important;
+    justify-self: center;
+    width: 100%;
+    max-width: 46rem !important;
+  }
+}
+#quarto-sidebar {
+  font-size: 0.92em;
+  .sidebar-item-section > .sidebar-item-container .sidebar-item-text {
+    font-family: $font-family-serif;
+    font-weight: 600;
+  }
+}
+
+// 验收清单复选框行距
+ul.task-list li {
+  margin: 0.3em 0;
+}
+
+// 通用排版层：必须在文件末尾 import —— Quarto 把本文件内联进主题大 SCSS，
+// @import 的输出位置跟随书写位置，置于 rules 之后才能覆盖 litera/Bootstrap 默认。
+@import 'typography';

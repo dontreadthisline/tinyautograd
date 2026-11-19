@@ -1,0 +1,10 @@
+title: Paper Book
+author: AI Project Genesis
+version: 0.1.0
+quarto-required: ">=1.4"
+contributes:
+  formats:
+    # 键为 base format 名（html），使用方写 format: paper-book-html（见 genesis-book 注释）
+    html:
+      theme: [journal, theme.scss]
+      include-in-header: sidebar-toggle.html

@@ -1,0 +1,60 @@
+---
+number-depth: 0
+---
+
+# 符号约定 {.unnumbered}
+
+全书数学记法集中定义于此；正文各章直接使用，不再就地重复定义。
+
+## 函数与映射
+
+| 记号 | 含义 |
+|---|---|
+| $f: \mathbb{R}^n \to \mathbb{R}^m$ | 被求导的目标函数；$x$ 为输入，$f(x)$ 为输出 |
+| $g: \mathbb{R}^n \to \mathbb{R}^m$ | 基本操作（词汇表中的一个算子），复合的构件 |
+| $J_g(x)$ | $g$ 在 $x$ 处的 Jacobian 矩阵；亦记 $Dg(x)$，两写法等价 |
+| $f \circ g$ | 函数复合：$(f \circ g)(x) = f(g(x))$ |
+| $f : \Theta \times X \to Y$ | 参数化函数族；$\Theta$ 参数空间，$X$ 输入空间，$Y$ 输出空间 |
+| $\Theta \to (X \to Y)$ | 上式的 currying 视角：参数固定在前，解释"参数树占第 0 位" |
+
+## 微分与余切
+
+| 记号 | 含义 |
+|---|---|
+| $L \in \mathbb{R}$ | 标量损失（反向模式的最终出口） |
+| $\bar v \equiv \partial L / \partial v$ | 值 $v$ 的**余切**（cotangent / adjoint）；上杠即余切，故 $\bar y$、$\bar W$、$\bar z_2$ 同理 |
+| $dL,\ dX$ | 微分记号（一阶线性主部），用于矩阵微分推导 |
+| $\operatorname{VJP}_g(x, \bar y) = J_g(x)^\top \bar y$ | 向量-Jacobian 积：反向模式的原子运算，从不物化 $J_g$ 本身 |
+| $\bar v = \sum_{\text{paths}} \cdots$ | 多路径使用时的全路径求和（值被多个下游共享时的梯度累加） |
+
+## 运算符
+
+| 记号 | 含义 |
+|---|---|
+| $A^\top$ | 矩阵转置 |
+| $u \odot v$ | 逐元素乘（Hadamard 积） |
+| $\operatorname{tr}(A)$ | 矩阵的迹 |
+| $\langle u, v \rangle$ | 内积 |
+| $\mathbb{1}\{P\}$ | 指示函数：条件 $P$ 成立处为 1，否则为 0 |
+
+## 第 1 章推导的两层 MLP 记号
+
+| 记号 | 含义 |
+|---|---|
+| $W_i,\ b_i$ | 第 $i$ 层权重与偏置 |
+| $z_i$ | 第 $i$ 层线性输出（$z = aW + b\mathbf{1}^\top$） |
+| $a_i$ | 第 $i$ 层激活（$a = \operatorname{relu}(z)$）；$a_0 \equiv x$ |
+| $p = \operatorname{softmax}(z_2)$ | 输出概率分布 |
+| $y$ | 标签（one-hot）；$\mathbf{1}$ 为全 1 向量 |
+
+## 排版约定
+
+| 形态 | 指称 |
+|---|---|
+| 斜体数学（$x$、$\bar v$、$J$） | 数学对象 |
+| 等宽代码（`Tensor`、`lift`、`ops.sum`） | Python 对象（可跳转源码） |
+| $\texttt{lift}$ 出现在公式中 | 公式语境里指代的代码对象，仍属 Python 世界（如 $\texttt{grad} \circ \texttt{grad}$） |
+
+::: {.callout-note title="一处刻意的混用"}
+代码标识符有时出现在数学式里（第 3 章的 $\underbrace{\texttt{lift}}_{\text{边}}$）。这不是笔误——被讨论的对象本身是代码，混排正是"DSL 征用 Python"（第 2 章）在排版上的体现。
+:::
