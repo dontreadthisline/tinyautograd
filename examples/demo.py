@@ -31,7 +31,7 @@ def demo1():
 
     loss_and_grad = value_and_grad(loss_fn)
 
-    # ---- DSL 外: 训练循环 + 手写 SGD ----
+    # ---- DSL 外: 训练循环控制流; 更新表达式仍在 DSL 内 (继续建图) ----
     lr = 0.25
     for step in range(300):
         loss, grads = loss_and_grad(params, x, y)  # 一次 trace, 全惰性

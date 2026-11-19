@@ -43,6 +43,7 @@ __all__ = [
     "cos",
     "tanh",
     "sigmoid",
+    "softmax",
     "matmul",
     "transpose",
     "sum",
@@ -149,6 +150,7 @@ sin = lift(mx.sin)
 cos = lift(mx.cos)
 tanh = lift(mx.tanh)
 sigmoid = lift(mx.sigmoid)
+softmax = lift(mx.softmax)
 matmul = lift(mx.matmul)
 transpose = lift(mx.transpose)
 

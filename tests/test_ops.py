@@ -103,3 +103,8 @@ def test_compose() -> None:
     a, _ = _pair()
     f = ops.compose(ops.square, ops.exp)  # f = sq∘exp
     _check(f(Tensor(a)), mx.square(mx.exp(a)))
+
+def test_softmax() -> None:
+    a = Tensor([1.0, 2.0, 3.0])
+    assert ops.softmax(a).tolist() == mx.softmax(mx.array([1.0, 2.0, 3.0])).tolist()
+
