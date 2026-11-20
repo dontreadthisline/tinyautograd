@@ -23,7 +23,7 @@ format:
   indigo-atlas-html:
     theme: [custom.scss]
     code-copy: true
-    include-in-header: back-to-landing.html
+    include-in-header: [back-to-landing.html, sketch-head.html]
     html-math-method:
       method: katex
       url: "resources/libs/katex/"

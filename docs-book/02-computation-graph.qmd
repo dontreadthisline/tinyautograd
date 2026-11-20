@@ -71,120 +71,97 @@ class Tensor:
 
 ## 一张真实的图
 
-下面这张计算图由页面脚本实时生成，对应 `examples/demo.py` 的两层 MLP 损失。**蓝框是叶子**（参数与数据，`op=None`），**紫框是算子节点**（记录 `inputs` 与输出形状）。*前向*按调用顺序建图（琥珀色光环游走），*反向*从 $L$ 出发逆序回流（绿色，即本章反向引擎的执行过程，梯度到达叶子时弹出标记）：
+下面这张计算图由页面脚本实时生成，与第 1 章的七算子表同构——两层 MLP 加交叉熵，softmax 在链条末端。**蓝框是叶子**（参数与数据，`op=None`），**空心圆是算子节点**；灰化的 $y$ 是标签，不参与回传。*前向*按调用顺序建图（琥珀色光环游走），*反向*从 $L$ 出发逆序回流（绿色，即本章梯度图的生长过程，梯度到达参数叶时弹出标记）：
 
 <div class="comp-graph" id="mlp-graph">
 <style>
 .comp-graph { margin: 1.2em 0; overflow-x: auto; }
-.comp-graph .cg-wrap { position: relative; width: 880px; height: 264px; background-color: #faf9f6; background-image: radial-gradient(circle at 1px 1px, #e7e3da 1px, transparent 0); background-size: 26px 26px; border: 1px solid #ddd8ce; border-radius: 10px; }
-.comp-graph .cg-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.cg-node { position: absolute; background: #fff; border: 1.5px solid #8250df; border-radius: 9px; padding: 6px 9px; min-width: 92px; text-align: center; white-space: nowrap; box-shadow: 0 1px 5px rgba(36,41,47,.10); transition: box-shadow .25s, border-color .25s, opacity .25s; }
-.cg-node.leaf { border-color: #0969da; }
-.cg-node.hide { opacity: 0; }
-.cg-node.show { opacity: 1; animation: cgpop .45s cubic-bezier(.2,1.4,.4,1); }
-@keyframes cgpop { 0% { transform: scale(.4); opacity: 0 } 100% { transform: scale(1); opacity: 1 } }
-.cg-node .nm { font: 600 12px/1.3 ui-monospace,monospace; color: #8250df; }
-.cg-node.leaf .nm { color: #0969da; }
-.cg-node .mt { font: 9.5px/1.35 ui-monospace,monospace; color: #6e7781; }
-.cg-node .vl { font: 600 9.5px/1.35 ui-monospace,monospace; color: #1a7f37; }
-.cg-node.visiting { border-color: #bf8700; box-shadow: 0 0 0 4px rgba(191,135,0,.18); }
-.cg-node.done { box-shadow: 0 0 0 3px rgba(26,127,55,.14); }
-.cg-node.back { border-color: #1a7f37; }
-.cg-node.back .nm { color: #1a7f37; }
-.cg-edge path { stroke: #a49b8e; stroke-width: 1.6; fill: none; transition: stroke .3s, stroke-width .3s; }
-.cg-edge.fwd path { stroke: #bf8700; stroke-width: 2.4; }
-.cg-edge.back path { stroke: #1a7f37; stroke-width: 2.6; }
+.comp-graph svg { display: block; margin: 0 auto; max-width: 100%; }
 .comp-graph .cg-bar { display: flex; gap: .5em; margin-bottom: .6em; }
-.comp-graph .cg-bar button { font: 500 .85em -apple-system,"PingFang SC",sans-serif; padding: .32em 1em; border: 1px solid #ddd8ce; border-radius: 6px; background: #fff; color: #24292f; cursor: pointer; }
+.comp-graph .cg-bar button { font: 500 .85em -apple-system,"PingFang SC",sans-serif; padding: .32em 1em;
+  border: 1px solid #ddd8ce; border-radius: 6px; background: #fff; color: #24292f; cursor: pointer; }
 .comp-graph .cg-bar button:hover { border-color: #0969da; color: #0969da; }
-.cg-chip { position: absolute; font: 600 10.5px ui-monospace,monospace; color: #fff; background: #8250df; border-radius: 5px; padding: 3px 8px; white-space: nowrap; opacity: 0; pointer-events: none; box-shadow: 0 2px 6px rgba(36,41,47,.2); }
-.cg-chip.g { background: #1a7f37; }
-.cg-chip.show { opacity: 1; animation: cgpop .4s cubic-bezier(.2,1.4,.4,1); }
 </style>
 <div class="cg-bar"><button onclick="cgForward()">前向 (建图)</button><button onclick="cgBackward()">反向 (余切回流)</button><button onclick="cgReset()">复位</button></div>
-<div class="cg-wrap"><svg viewBox="0 0 880 264"></svg>
-<div class="cg-node leaf" id="cgn-x"   style="left:20px;  top:26px"><div class="nm">x</div><div class="mt">(4,3) 数据</div><div class="vl">1..9</div></div>
-<div class="cg-node"      id="cgn-mm1" style="left:146px; top:26px"><div class="nm">matmul</div><div class="mt">inputs=[x,W1]</div><div class="vl">(4,5)</div></div>
-<div class="cg-node"      id="cgn-z1"  style="left:272px; top:26px"><div class="nm">add</div><div class="mt">inputs=[mm1,b1]</div><div class="vl">(4,5)</div></div>
-<div class="cg-node"      id="cgn-h"   style="left:398px; top:26px"><div class="nm">relu</div><div class="mt">maximum(z1, 0)</div><div class="vl">(4,5) 3 处零</div></div>
-<div class="cg-node"      id="cgn-mm2" style="left:524px; top:26px"><div class="nm">matmul</div><div class="mt">inputs=[h,W2]</div><div class="vl">(4,4)</div></div>
-<div class="cg-node"      id="cgn-o"   style="left:650px; top:26px"><div class="nm">add</div><div class="mt">inputs=[mm2,b2]</div><div class="vl">(4,4)</div></div>
-<div class="cg-node"      id="cgn-L"   style="left:776px; top:26px"><div class="nm">mean</div><div class="mt">标量 · 根</div><div class="vl">L</div></div>
-<div class="cg-node leaf" id="cgn-W1"  style="left:146px; top:172px"><div class="nm">W1</div><div class="mt">(3,5) 参数</div><div class="vl">.</div></div>
-<div class="cg-node leaf" id="cgn-b1"  style="left:272px; top:172px"><div class="nm">b1</div><div class="mt">(5,) 参数</div><div class="vl">.</div></div>
-<div class="cg-node leaf" id="cgn-W2"  style="left:524px; top:172px"><div class="nm">W2</div><div class="mt">(5,4) 参数</div><div class="vl">.</div></div>
-<div class="cg-node leaf" id="cgn-b2"  style="left:650px; top:172px"><div class="nm">b2</div><div class="mt">(4,) 参数</div><div class="vl">.</div></div>
-<div class="cg-node leaf" id="cgn-y"   style="left:776px; top:172px"><div class="nm">y</div><div class="mt">(4,4) 目标</div><div class="vl">.</div></div>
-<div class="cg-chip"     id="cgc-L"  style="left:776px; top:2px">L̄ = 1</div>
-<div class="cg-chip g"   id="cgc-W1" style="left:118px; top:212px">W̄1 ✓</div>
-<div class="cg-chip g"   id="cgc-b1" style="left:244px; top:212px">b̄1 ✓</div>
-<div class="cg-chip g"   id="cgc-W2" style="left:496px; top:212px">W̄2 ✓</div>
-<div class="cg-chip g"   id="cgc-b2" style="left:622px; top:212px">b̄2 ✓</div>
-<div class="cg-chip g"   id="cgc-x"  style="left:8px;  top:2px">x̄ ✓</div>
-</div>
-</div>
+<svg id="cgsvg" viewBox="0 0 880 180" width="880" height="180"></svg>
 <script>
-(function () {
-  function anch(id) {
-    var el = document.getElementById("cgn-" + id);
-    var x = parseFloat(el.style.left), y = parseFloat(el.style.top);
-    return { x: x, y: y, w: el.offsetWidth, h: el.offsetHeight };
-  }
-  var edges = [["x","mm1"],["W1","mm1"],["mm1","z1"],["b1","z1"],["z1","h"],["h","mm2"],
-               ["W2","mm2"],["mm2","o"],["b2","o"],["o","L"],["y","L"]];
-  var svg = document.querySelector("#mlp-graph svg");
-  var NS = "http://www.w3.org/2000/svg";
-  edges.forEach(function (e) {
-    var a = anch(e[0]), b = anch(e[1]);
-    var g = document.createElementNS(NS, "g"); g.setAttribute("class", "cg-edge"); g.id = "cge-" + e[0] + "-" + e[1];
-    var p = document.createElementNS(NS, "path");
-    var up = b.y < a.y;
-    var x1, y1, x2, y2;
-    if (up) { x1 = a.x + a.w / 2; y1 = a.y; x2 = b.x + b.w / 2; y2 = b.y + b.h; }
-    else    { x1 = a.x + a.w; y1 = a.y + a.h / 2; x2 = b.x; y2 = b.y + b.h / 2; }
-    var mx = up ? x1 : (x1 + x2) / 2;
-    p.setAttribute("d", "M " + x1 + " " + y1 + " C " + mx + " " + y1 + ", " + mx + " " + y2 + ", " + x2 + " " + y2);
-    g.appendChild(p); svg.appendChild(g);
+window.addEventListener('load', function () {
+  if (typeof Sketch === 'undefined') return;
+  /* ---- 结构: 与落地页计算图逐字一致 ---- */
+  const svg = document.getElementById('cgsvg');
+  const s = Sketch(svg);
+  const Y1 = 52, Y2 = 152, R = 22, RL = 15;
+  const pos = { x: [26, Y1], mm1: [140, Y1], z1: [254, Y1], h: [368, Y1],
+                mm2: [482, Y1], o: [596, Y1], sm: [698, Y1], L: [800, Y1],
+                W1: [140, Y2], b1: [254, Y2], W2: [482, Y2], b2: [596, Y2], y: [800, Y2] };
+  const isLeaf = id => ['x','W1','b1','W2','b2','y'].includes(id);
+  const EDGES = [['x','mm1'],['W1','mm1'],['mm1','z1'],['b1','z1'],['z1','h'],['h','mm2'],
+                 ['W2','mm2'],['mm2','o'],['b2','o'],['o','sm'],['sm','L'],['y','L']];
+  const edges = {};
+  EDGES.forEach(([a, b]) => {
+    const [ax, ay] = pos[a], [bx, by] = pos[b];
+    const ra = isLeaf(a) ? RL : R, rb = isLeaf(b) ? RL : R;
+    let d;
+    if (by > ay) { d = `M${ax + ra} ${ay} C ${ax + 44} ${ay}, ${bx - 44} ${by}, ${bx - rb} ${by}`; }
+    else { d = `M${ax} ${ay + ra} C ${ax + 5} ${ay + 40}, ${bx - 5} ${by - 40}, ${bx} ${by - rb}`; }
+    edges[a + '-' + b] = s.path(d, { stroke: 'rgba(58,74,168,.35)', width: 1.4, arrow: true });
   });
-  var fwdOrder = ["x","W1","b1","W2","b2","y","mm1","z1","h","mm2","o","L"];
-  var backEdges = [["L","o"],["o","b2"],["o","mm2"],["mm2","W2"],["mm2","h"],["h","z1"],["z1","b1"],["z1","mm1"],["mm1","W1"],["mm1","x"]];
-  var backNodes = ["L","o","b2","mm2","W2","h","z1","b1","mm1","W1","x"];
-  var timers = [];
-  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
-  function hideAll() {
-    clearTimers();
-    document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.classList.remove("show", "done", "back", "visiting"); n.classList.add("hide"); });
-    document.querySelectorAll("#mlp-graph .cg-edge").forEach(function (e) { e.classList.remove("fwd", "back"); });
-    document.querySelectorAll("#mlp-graph .cg-chip").forEach(function (c) { c.classList.remove("show"); });
-  }
+  const OPS = { mm1: 'matmul', z1: 'add', h: 'relu', mm2: 'matmul', o: 'add', sm: 'softmax', L: 'CE' };
+  const META = { mm1: '[x,W1]', z1: '[mm1,b1]', h: 'max(z1,0)', mm2: '[h,W2]', o: '[mm2,b2]', sm: 'p', L: '-<y,log p>' };
+  const nodes = {};
+  Object.keys(pos).forEach(id => {
+    const [x, yy] = pos[id];
+    if (isLeaf(id)) {
+      nodes[id] = s.node(x, yy, { r: RL, fill: id === 'y' ? '#c9cbd6' : '#dfe7fb' });
+      s.label(x, yy + 4, id, { mono: true, size: 10.5, weight: 600, color: id === 'y' ? '#8a8f9c' : '#3a4aa8' });
+    } else {
+      nodes[id] = s.node(x, yy, { r: R });
+      s.label(x, yy + 5, OPS[id], { mono: true, size: 11, weight: 600, color: '#2c3a8c' });
+      s.label(x, yy - R - 8, META[id], { mono: true, size: 8.5, color: '#6b7280' });
+    }
+  });
+  /* ---- 动效: 前向琥珀游走 / 反向绿色回流 + 梯度标记 ---- */
+  const fwdOrder = ['x','W1','b1','W2','b2','y','mm1','z1','h','mm2','o','sm','L'];
+  const backNodes = ['L','sm','o','b2','mm2','W2','h','z1','b1','mm1','W1','x'];
+  const backEdges = [['L','sm'],['sm','o'],['o','b2'],['o','mm2'],['mm2','W2'],['mm2','h'],['h','z1'],
+                     ['z1','b1'],['z1','mm1'],['mm1','W1'],['mm1','x']];
+  const GRAD = ['W1','b1','W2','b2','x'];
+  const AMBER = '#bf8700', GREEN = '#1a7f37', INK = '#3a4aa8';
+  const leafFill = id => id === 'y' ? '#c9cbd6' : '#dfe7fb';
+  let timers = [];
+  const clr = () => { timers.forEach(clearTimeout); timers = []; };
+  function base(n, id) { n.setAttribute('stroke', INK); n.setAttribute('stroke-width', 1.6); n.setAttribute('fill', isLeaf(id) ? leafFill(id) : '#fff'); }
   window.cgReset = function () {
-    hideAll();
-    document.querySelectorAll("#mlp-graph .cg-node").forEach(function (n) { n.classList.remove("hide"); });
+    clr();
+    Object.entries(nodes).forEach(([id, n]) => base(n, id));
+    Object.values(edges).forEach(e => { e.setAttribute('stroke', 'rgba(58,74,168,.35)'); e.setAttribute('stroke-width', 1.4); });
+    document.querySelectorAll('#cgsvg .cg-grad').forEach(g => g.remove());
   };
   window.cgForward = function () {
-    hideAll();
-    fwdOrder.forEach(function (id, i) {
-      timers.push(setTimeout(function () {
-        var n = document.getElementById("cgn-" + id);
-        n.classList.remove("hide"); n.classList.add("show"); n.classList.add("visiting");
-        edges.forEach(function (e) { if (e[1] === id) { var g = document.getElementById("cge-" + e[0] + "-" + e[1]); if (g) g.classList.add("fwd"); } });
-        timers.push(setTimeout(function () { n.classList.remove("visiting"); n.classList.add("done"); }, 300));
-      }, i * 230));
-    });
+    cgReset();
+    fwdOrder.forEach((id, i) => timers.push(setTimeout(function () {
+      const n = nodes[id]; n.setAttribute('stroke', AMBER); n.setAttribute('stroke-width', 2.6);
+      timers.push(setTimeout(function () { n.setAttribute('stroke', GREEN); n.setAttribute('stroke-width', 2); }, 300));
+      EDGES.forEach(([a, b]) => { if (b === id) { const e = edges[a + '-' + b]; e.setAttribute('stroke', AMBER); e.setAttribute('stroke-width', 2.2); } });
+    }, i * 230)));
   };
   window.cgBackward = function () {
-    hideAll();
-    backNodes.forEach(function (id, i) {
-      timers.push(setTimeout(function () {
-        var n = document.getElementById("cgn-" + id);
-        n.classList.remove("hide"); n.classList.add("show"); n.classList.add("back");
-        backEdges.forEach(function (e) { if (e[0] === id) { var g = document.getElementById("cge-" + e[1] + "-" + e[0]); if (g) g.classList.add("back"); } });
-        var chip = document.getElementById("cgc-" + id); if (chip) chip.classList.add("show");
-      }, 300 + i * 230));
-    });
+    cgReset();
+    backNodes.forEach((id, i) => timers.push(setTimeout(function () {
+      const n = nodes[id]; n.setAttribute('stroke', GREEN); n.setAttribute('stroke-width', 2.4);
+      if (GRAD.includes(id)) n.setAttribute('fill', 'rgba(26,127,55,.14)');
+      backEdges.forEach(([a, b]) => { if (a === id) { const e = edges[b + '-' + a] || edges[a + '-' + b]; if (e) { e.setAttribute('stroke', GREEN); e.setAttribute('stroke-width', 2.2); } } });
+      if (GRAD.includes(id)) {
+        const x = parseFloat(nodes[id].getAttribute('cx'));
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g'); g.setAttribute('class', 'cg-grad');
+        svg.appendChild(g);
+        Sketch(g).label(x, Y2 - 26, '\u2207' + id, { mono: true, size: 11, weight: 600, color: GREEN });
+      }
+    }, 300 + i * 230)));
   };
-})();
+});
 </script>
+</div>
 
 ## 从链到图
 
