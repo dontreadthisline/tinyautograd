@@ -38,19 +38,89 @@ $$
 J_f(x) = J_{f_k}(x_{k-1}) \cdots J_{f_2}(x_1) \, J_{f_1}(x_0) \tag{1.1}
 $$
 
-即一串 Jacobian 矩阵的乘积。形式上正确，工程上却是灾难：设中间层维度为 $d_1 \times d_2, d_2 \times d_3, \ldots$，逐项显式相乘的代价是 $O(\sum_i d_i d_{i+1} d_{i+2})$——每一项都是三个维度的乘积。更致命的是**标量损失场景**：机器学习的 $f$ 最终坍缩为一个标量 $L \in \mathbb{R}$（损失），此时真正需要的只是
+矩阵乘法满足结合律，计算顺序是自由的。对式 (1.1) 存在两种本质上不同的策略，它们数学等价、代价各异。
 
-$$\nabla_x L \in \mathbb{R}^n$$
+**沿前向方向**（走到哪算到哪）：每到第 $i$ 层，算出 $J_{f_i}(x_{i-1})$ 并乘进部分积 $P_i = J_{f_i} P_{i-1}$。好处是导数计算和前向求值天然同步，$x_{i-1}$ 用完即丢——不需要缓存中间激活。代价是中间部分积 $P_i$ 是 $d_i \times n$ 矩阵，当参数维度 $n$ 大时它不小。
 
-一个 $n$ 维向量。为了一个向量去显式物化沿途所有 Jacobian 矩阵（其中可能有 $d_i \times d_j$ 的巨型矩阵），是典型的"中间结果大于答案"。
-
-矩阵乘法满足结合律，式 (1.1) 的计算顺序是自由的。**从右往左**结合。先给反向一个种子：取 $v = \bar x_k$，即输出处的余切——标量损失场景下 $\bar L = 1$，它是反向传播唯一的初始输入。于是
+**沿反向方向**（先走完前向，再从后往前）：给反向一个种子 $\bar x_k$（标量损失下 $\bar L = 1$），逐层回传
 
 $$
-J_f(x)^\top \bar x_k = J_{f_1}(x_0)^\top \Big( J_{f_2}(x_1)^\top \cdots \big( J_{f_k}(x_{k-1})^\top \bar x_k \big) \Big) \tag{1.2}
+\bar x_{i-1} = J_{f_i}(x_{i-1})^\top \, \bar x_i \qquad i = k, k-1, \ldots, 1 \tag{1.2}
 $$
 
-式 (1.2) 的嵌套可以拆开。从种子 $\bar x_k$ 出发，第一拍算出 $\bar x_{k-1} = J_{f_k}(x_{k-1})^\top \bar x_k$；它恰好是第二拍的输入，$\bar x_{k-2} = J_{f_{k-1}}(x_{k-2})^\top \bar x_{k-1}$；如此迭代直到 $\bar x_0 = \nabla_x L$。每一拍都是**矩阵转置乘向量**——$O(d_{i-1} \cdot d_i)$ 的线性代价，全程没有任何矩阵被显式构造；每一拍算出的新余切，恰好交给前一层使用。这就是**反向模式**（reverse mode）。
+每一拍只有矩阵转置乘向量，中间结果是 $d_i$ 维向量——比部分积矩阵轻。代价是必须缓存所有前向激活：$J_{f_i}^\top$ 在 $x_{i-1}$ 处求值，反向时要用。
+
+| | 中间数据 | 内存特征 |
+|---|---|---|
+| 沿前向 | 部分积矩阵 $d_i \times n$ | 不缓存激活，但中间矩阵不小 |
+| 沿反向 | 余切向量 $\bar x_i \in \mathbb{R}^{d_i}$ | 缓存全部激活，但中间结果轻 |
+
+机器学习的参数通常高维（$n$ 大），部分积矩阵太重，所以选择反向；代价是缓存激活——哪些前向值必须活到反向，就是这张表的推论。
+
+下图并置两种策略：上排沿前向方向连乘部分积，下排反向流水线逐拍回传。
+<div class="jc-fig" aria-hidden="true">
+<style>
+.jc-fig { margin: 1.6em 0; }
+.jc-fig svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+</style>
+<svg id="jc" viewBox="0 0 640 350" width="640" height="350"></svg>
+<script>
+window.addEventListener('load', function () {
+  if (typeof Sketch === 'undefined') return;
+/* ---- 3. Jacobian 链: 上排物化代价; 下排四行递推等式 ---- */
+(function () {
+  const s = Sketch(document.getElementById('jc'));
+  const P = s.PALETTE;
+  function mat(x, y, w, h, stroke) {
+    s.path(`M${x} ${y} L ${x + w} ${y} L ${x + w} ${y + h} L ${x} ${y + h} Z`, { stroke, width: 1.5 });
+    s.path(`M${x - 4} ${y} L ${x - 4} ${y + h}`, { stroke, width: 1.3, rough: false });
+    s.path(`M${x + w + 4} ${y} L ${x + w + 4} ${y + h}`, { stroke, width: 1.3, rough: false });
+  }
+  function colvec(x, ytop, color, strong) {
+    for (let i = 0; i < 3; i++)
+      s.path(`M${x} ${ytop + i * 11} L ${x + 10} ${ytop + i * 11} L ${x + 10} ${ytop + i * 11 + 8} L ${x} ${ytop + i * 11 + 8} Z`,
+             { stroke: strong ? color : 'rgba(58,74,168,.5)', width: 1.2, fill: strong ? color : 'none', rough: false });
+  }
+  /* 上排: J₁J₂J₃J₄ 逐项相乘, 物化大矩阵, 答案只是一列 */
+  const xs = [70, 160, 250, 340], w0 = 34, hs = [40, 64, 64, 44], Y1 = 76;
+  hs.forEach((h, i) => {
+    mat(xs[i], Y1 - h / 2, w0, h, 'rgba(58,74,168,.7)');
+    s.label(xs[i] + w0 / 2, Y1 + h / 2 + 16, 'J' + (i + 1), { mono: true, size: 11, color: '#2c3a8c' });
+    if (i < 3) s.label(xs[i] + w0 + 28, Y1 + 5, '·', { mono: true, size: 16, color: '#9aa1b9' });
+  });
+  s.path('M446 26 L548 26 L548 128 L446 128 Z', { stroke: 'rgba(191,135,0,.5)', width: 1.4, fill: 'rgba(191,135,0,.06)' });
+  s.label(497, 66, 'dᵢ×dⱼ', { mono: true, size: 11, color: '#bf8700' });
+  s.path('M548 77 L 584 77', { stroke: 'rgba(191,135,0,.6)', width: 1.4, arrow: true });
+  colvec(594, Y1 - 16, '#bf8700', true);
+  s.label(599, Y1 + 30, '∇ₓL', { mono: true, size: 12, weight: 600, color: '#bf8700' });
+  s.label(320, 150, 'O( Σ dᵢ·dᵢ₊₁·dᵢ₊₂ )', { mono: true, size: 10.5, color: '#bf8700' });
+  /* 下排: 反向流水线  x̄ᵢ [Jᵀᵢ]→ x̄ᵢ₋₁ [Jᵀᵢ₋₁]→ …  每个向量只画一次 */
+  const Y2 = 250;
+  const seq = [
+    [70,  'x̄₄', true], [88, null], [192, 'x̄₃', false], [210, null],
+    [314, 'x̄₂', false], [332, null], [436, 'x̄₁', false], [454, null],
+    [558, 'x̄₀ = ∇ₓL', true],
+  ];
+  const matX = [88, 210, 332, 454]; matMeta = [['Jᵀ₄', 'x₃'], ['Jᵀ₃', 'x₂'], ['Jᵀ₂', 'x₁'], ['Jᵀ₁', 'x₀']];
+  matX.forEach((mx, i) => {
+    mat(mx, Y2 - hs[3 - i] / 2, 34, hs[3 - i], 'rgba(58,74,168,.7)');
+    s.label(mx + 17, Y2 + hs[3 - i] / 2 + 15, matMeta[i][0] + ' (' + matMeta[i][1] + ')', { mono: true, size: 10, color: '#2c3a8c' });
+  });
+  seq.forEach(([x, name, hot]) => {
+    if (!name) return;
+    colvec(x, Y2 - 16, P.green, hot);
+    s.label(x + 5, Y2 + 26, name, { mono: true, size: 11, weight: hot ? 600 : 400, color: P.green });
+  });
+  matX.forEach((mx, i) => {                       /* 产出箭头: 块左缘 -> 下一个向量 */
+    const out = [192, 314, 436, 558][i];
+    s.path(`M${mx + 38} ${Y2} L ${out - 5} ${Y2}`, { stroke: P.green, width: 1.5, arrow: true, rough: false });
+  });
+  s.pulse('M70 ' + Y2 + ' L 568 ' + Y2, { t0: 0.5, travel: 4.2, period: 9, color: P.green, size: 4 });
+  s.label(320, 320, 'x̄ᵢ₋₁ = Jᵀᵢ(xᵢ₋₁) · x̄ᵢ    i = k…1        O( Σ dᵢ·dᵢ₊₁ )', { mono: true, size: 10.5, color: P.green });
+})();
+});
+</script>
+</div>
 
 ## VJP 的运算形式
 
