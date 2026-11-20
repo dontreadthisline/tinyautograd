@@ -25,6 +25,7 @@ jobs:
         run: |
           mkdir -p site
           cp docs-book/index.html site/
+          cp docs-book/sketchbook.html docs-book/lab.html site/ || true
           cp -r docs-book/book site/book
       - uses: actions/upload-pages-artifact@v3
         with:
