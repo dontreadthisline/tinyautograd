@@ -166,3 +166,18 @@ def test_reach_pruning() -> None:
     g = grad(lambda t: ops.sum(t * y_leaf))(x)
     eval(g)
     _close(g._array, mx.exp(mx.array([1.0, 2.0, 3.0])))
+
+def test_nested_pytree_grads() -> None:
+    params = {
+        "linear": {"W": ops.zeros((2, 3)), "b": ops.zeros((3,))},
+        "aux": [Tensor(1.0), (Tensor(2.0), Tensor(3.0))],
+    }
+
+    def f(p):
+        return ops.sum(p["linear"]["W"] * 2) + ops.sum(p["aux"][0]) + p["aux"][1][0]
+
+    loss, g = value_and_grad(f)(params)
+    eval(loss, g)
+    assert loss.item() == 3.0
+    assert set(g.keys()) == set(params.keys())                 # 第一层同构
+    assert isinstance(g["aux"], list) and isinstance(g["aux"][1], tuple)  # 嵌套类型保真

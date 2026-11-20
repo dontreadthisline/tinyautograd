@@ -76,5 +76,5 @@ just serve  # 仅预览;  just docs 仅构建;  just stop 停止
 - 算子全部为模块函数, 无方法链 (仅中缀记法 + 元数据 property + DSL 出口)
 - 图随 Python 引用存活, `no_grad` 控制建边, `detach` 为语义孔 (stop-gradient)
 - 绑定 MLX 单后端 (曾有可插拔后端层, 为算子静态可见性而移除, 书中第 4 章记录了这次重构)
-- 类型: PEP 695 (`type` 语句 / `ParamSpec`), `PyTree[T]` 递归泛型
+- 类型: `PyTree[T]` 递归泛型, 变换签名保持用户函数形状
 - 不做: module 层、优化器、vmap/compile、多设备、高阶导

@@ -59,6 +59,6 @@ $$
 
 ::: {.callout-caution title="练习"}
 1. 在 tinyautograd 里实现"求值即断链"版本 `eval2`（断链 + 保持 `vjp` 可用）。跑全部测试，指出哪些测试暴露了 sharp edge，为什么 MLX 源码需要 `is_tracer()` 豁免而你的 `eval2` 需要什么等价物？
-2. 证明：持有 loss 输出 Tensor 的训练循环（不 `del` 中间 loss）会导致第 $k$ 步时内存中有多少条历史链？`no_grad` 应该加在循环的什么位置才能止血？
+2. 说明：持有 loss 输出 Tensor 的训练循环（不 `del` 中间 loss）会导致第 $k$ 步时内存中有多少条历史链？`no_grad` 应该加在循环的什么位置才能止血？
 3. 讨论题：如果给 tinyautograd 加 `compile`（追踪 `f` 一次、重放多次），`random` 模块（每次调用重采样）会发生什么？给出三种处理方案及其语义后果。
 :::
