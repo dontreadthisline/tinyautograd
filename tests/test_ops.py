@@ -6,7 +6,7 @@ import mlx.core as mx
 
 mx.random.seed(0)
 
-from tinyautograd import Tensor, ops, random
+from tinyautograd import Tensor, tensor, ops, random
 
 
 def _pair(seed: int = 0) -> tuple[mx.array, mx.array]:
@@ -108,3 +108,7 @@ def test_softmax() -> None:
     a = Tensor([1.0, 2.0, 3.0])
     assert ops.softmax(a).tolist() == mx.softmax(mx.array([1.0, 2.0, 3.0])).tolist()
 
+def test_tensor_factory_identity() -> None:
+    t = ops.zeros((2,))
+    assert tensor(t) is t          # 已是 Tensor: 原样返回
+    assert tensor([1.0, 2.0]).tolist() == [1.0, 2.0]

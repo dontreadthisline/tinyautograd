@@ -1,9 +1,9 @@
 # DSL {#sec-dsl}
 
-前两章完成了两次视角切换：网络是复合函数（第 1 章），函数在具体输入下展开为图（第 2 章）。本章是第三次切换——**图如何被书写**：征用 Python 子集作为 DSL，用词汇表把图描述出来。先看这门语言的使用形态（怎么定义网络、怎么更新参数），再看它的设计与边界，最后看词汇的实现机制（`lift` 与 `const`）。
+前两章完成了两次视角切换——第 1 章把网络表示为复合函数，第 2 章把函数展开为图。本章是第三次切换：**图如何被书写**：征用 Python 子集作为 DSL，用词汇表把图描述出来。先看这门语言的使用形态（怎么定义网络、怎么更新参数），再看它的设计与边界，最后看词汇的实现机制。
 
 ::: {.callout-important title="本章问题"}
-一门征用 Python 的 DSL 长什么样——用户如何用它定义神经网络、训练循环里参数如何更新？语言的边界在哪、词汇从哪里来？
+一门征用 Python 的 DSL 长什么样——用户如何用它定义神经网络、训练循环里参数如何更新？语言的边界在哪、算子词汇从哪里来？
 :::
 
 ## 用 DSL 书写网络与训练
@@ -11,7 +11,7 @@
 定义网络就是定义函数——没有 Layer/Module 类，参数树是普通 dict，网络是吃参数树的纯函数：
 
 ```python
-from tinyautograd import Tensor, ops, random, value_and_grad, eval
+from tinyautograd import Tensor, tensor, ops, random, value_and_grad, eval
 
 def loss_fn(params: dict[str, Tensor], x: Tensor, y: Tensor) -> Tensor:
     h = ops.relu(x @ params["W1"] + params["b1"])   # 中缀与前缀混排
@@ -24,6 +24,7 @@ def loss_fn(params: dict[str, Tensor], x: Tensor, y: Tensor) -> Tensor:
 ```python
 random.seed(0)
 params = {"W1": random.normal((6, 32)) * 0.1, "b1": ops.zeros((32,)), ...}
+x, y = tensor(x_data), tensor(y_data)          # 源的通用构造
 
 loss_and_grad = value_and_grad(loss_fn)          # 参数树占第 0 位 (currying 约定)
 for step in range(300):
@@ -56,7 +57,7 @@ for step in range(300):
 
 边界同样明确——**语义上不属于图的东西不进 DSL**：副作用、IO（`print`/`item()` 是隐式求值门）、反射、可变全局状态，它们在 trace 前后发生，或不参与图。公理 C（API 表面 = DSL 语法面）因此有了一个可操作的检验法：一个候选 API 若不属于任何一行的右列，它就不该进核心（第 4 章的门面分层正是这个检验法的应用）。
 
-## 词汇的实现：lift 与 const
+## 词汇的实现
 
 ### lift
 
@@ -77,39 +78,47 @@ def lift(fn):
 
 `lift_multi` 是多输出变体：`fn` 返回 tuple 时，多个输出 Tensor 共享一个 `op`（`index` 区分），对应第 2 章的补零反传。
 
-### const
+### 源
 
-`const(fn)(args)` 返回 `Tensor(fn(*args))`——`op=None`、`inputs=()`，叶子：
+源不需要门。小写工厂 `tensor(value)` 是源的完整产生式——任何返回 Tensor 的函数都是源词汇：
 
 ```python
-def const(fn):
-    def wrapped(*args):
-        return Tensor(fn(*args))   # 无边: op=None, inputs=()
-    return wrapped
+def xavier(shape):
+    return tensor(mx.random.normal(shape) * 0.02)   # 用户的自定义源, 无需任何门
 ```
 
-它不是算子：参数是**形状描述**而非数组，"对形状求导"无意义。它在图里的角色是**源点**——链式法则的传导在这里终止。
+内置源词汇由内部便利批量生成，一行一个，不进公开 API：
 
-`lift` 与 `const` 一体两面，恰好覆盖图的两类组成：
+```python
+def _source(fn):                      # 内部便利: 包装 mx 构造函数为源词汇
+    def wrapped(*args):
+        return tensor(fn(*args))      # 无边: op=None, inputs=()
+    return wrapped
+
+zeros = _source(mx.zeros)
+normal = _source(mx.random.normal)
+```
+
+源与边的地位是**不对称**的，这个不对称本身就是设计：
 
 $$
-\underbrace{\texttt{lift}}_{\text{边: 有输入, 参与反传}} \qquad\quad \underbrace{\texttt{const}}_{\text{源: 无输入, 调用时刻定值}} \qquad \text{图} = \text{源点集} \cup \text{边集}
+\underbrace{\texttt{lift}}_{\text{边: 受控, 经门}} \qquad\quad \underbrace{\texttt{tensor}(\cdot)}_{\text{源: 自由, 无需门}} \qquad \text{门的存在与正确性风险成正比}
 $$
 
-随机语义在 `const` 里免费获得：每次调用重新执行 `fn`，即重新采样；且因为它是叶子，梯度绕它而行——**随机量参与前向，但不被求导**。这正是 dropout、噪声正则需要的语义。
+建边需要构造 `Op`、保证反向通路——是框架的特权操作，必须经门；造值没有正确性风险，构造即得，自由开放。`tensor()` 固化产出为叶子，用户无法经它触到 inputs/op——建边只有 lift 一条路。API 面的每一处不对称，都是风险的形状。
 
-随机算子的**反向安全性**也在这里一并成立。以 dropout 为例：mask 由 `const` 采样后作为常量叶子进入图，第 2 章的反向引擎重放的算子是确定性的 `mul`（mask 是它的输入之一，不会被重采样）。一次 trace 架构下，随机性被冻结在 trace 时刻，反向传播的每一步都是确定性计算——这是决策 D1（per-call 采样、不做 JAX 式 key，见第 4 章决策记录）的安全根据。若误用 `lift` 包装随机函数，反向时重放的将是不可重放的采样器本身——错误不是"慢"，是"错"。
+源词汇的语义也在此一并确定。**per-call 定值**：源是函数调用，每次调用重新执行内部的构造函数——随机源每次重采样，且因为产出的是叶子，梯度绕它而行：**随机量参与前向，但不被求导**，这正是 dropout、噪声正则需要的语义。**反向安全性**：以 dropout 为例，mask 采样后作为叶子进入图，第 2 章的反向引擎重放的算子是确定性的 `mul`（mask 是它的输入之一，不会被重采样）——一次 trace 架构下，随机性被冻结在 trace 时刻。这是决策 D1（per-call 采样、不做 JAX 式 key，见第 4 章决策记录）的安全根据；反之，若用 `lift` 包装随机函数，反向时重放的将是不可重放的采样器本身——错误不是"慢"，是"错"。
 
 ## no_grad 开关
 
 `lift`/`lift_multi` 内部都检查模块级标志 `_no_grad`：上下文管理器 `no_grad()` 将其置位后，算子退化为纯前向（不建边）。这是**控制图构成**的最小机制——它不销毁已有的图（值中心表示下图的生死由引用决定），只决定**之后的**算子是否建边。第 5 章将把它放到三家框架的坐标系里，追问它为什么存在、以及在别的表示法下为什么会消失。
 
 ::: {.callout-important title="本章要点"}
-DSL 的设计分三层：**使用形态**（定义网络 = 定义纯函数；更新表达式仍在语言内继续建图，DSL 外的只有训练循环的控制流；`eval` 是唯一算账门）；**语言本身**（静态词汇表 + 中缀/下标语法糖，征用 Python 子集，副作用与 IO 不进图）；**实现机制**（`lift` 建边获得外包反向，`const` 无边获得常量/随机源语义）。三层各自独立演化——用户大部分时间只跟第一层打交道。
+DSL 的设计分三层：**使用形态**（定义网络 = 定义纯函数；更新表达式仍在语言内继续建图，DSL 外的只有训练循环的控制流；`eval` 是唯一算账门）；**语言本身**（静态词汇表 + 中缀/下标语法糖，征用 Python 子集，副作用与 IO 不进图）；**实现机制**（`lift` 建边获得外包反向；源无需门，Tensor 构造即源）。三层各自独立演化——用户大部分时间只跟第一层打交道。
 :::
 
 ::: {.callout-caution title="练习"}
 1. 用 `lift` 造 `softsign(x) = x / (1 + |x|)`，用 `grad` 验证 $d(x \mapsto \operatorname{softsign}(x)^2)/dx = 2\,\operatorname{softsign}(x) / (1+|x|)^2$。
-2. `const(lambda shape: mx.random.normal(shape=shape))` 与把 `random.normal` 提出 loss 函数外、采样一次后当常量传入——两种写法的梯度有何异同？训练行为有何差别（提示：噪声正则 vs 数据增广）？
+2. 每次调用内部重新采样的自定义源（返回 `Tensor` 的函数）与把 `random.normal` 提出 loss 函数外、采样一次后当常量传入——两种写法的梯度有何异同？训练行为有何差别（提示：噪声正则 vs 数据增广）？
 3. `__getitem__` 用了 `lift(lambda ...)` 而不是预置词条。给 `ops` 增加 `take`（沿轴取下标）词条，要求支持反向（提示：散射/one-hot，或直接信任 `mx.take` 的 vjp）。
 :::

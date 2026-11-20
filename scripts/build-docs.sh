@@ -80,12 +80,12 @@ for f in pages:
             fail.append(f"{name}: katex 资源缺失 {m}")
 
 # 源码 include 已嵌入 (02 章类型骨架 / 03 章 lift 与 const 核心片段)
-for page, mark in [("02-value-centric", "__slots__"), ("03-dsl", "wrapped")]:
+for page, mark in [("02-computation-graph", "__slots__"), ("03-dsl", "wrapped")]:
     if mark not in open(f"docs-book/book/{page}.html").read():
         fail.append(f"{page}: 核心代码片段缺失")
 
 # GitHub 源码链接存在
-for page in ("02-value-centric", "03-dsl"):
+for page in ("02-computation-graph", "03-dsl"):
     if "dontreadthisline/tinyautograd/blob/main" not in open(f"docs-book/book/{page}.html").read():
         fail.append(f"{page}: GitHub 源码链接缺失")
 

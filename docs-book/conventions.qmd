@@ -14,6 +14,7 @@ number-depth: 0
 | $g: \mathbb{R}^n \to \mathbb{R}^m$ | 基本操作（词汇表中的一个算子），复合的构件 |
 | $J_g(x)$ | $g$ 在 $x$ 处的 Jacobian 矩阵；亦记 $Dg(x)$，两写法等价 |
 | $f \circ g$ | 函数复合：$(f \circ g)(x) = f(g(x))$ |
+| $f = f_k \circ \cdots \circ f_1$ | 复合链。$f_i: \mathbb{R}^{d_{i-1}} \to \mathbb{R}^{d_i}$ 是第 $i$ 个基本操作，自 $f_1$ 起依次作用 |
 | $f : \Theta \times X \to Y$ | 参数化函数族；$\Theta$ 参数空间，$X$ 输入空间，$Y$ 输出空间 |
 | $\Theta \to (X \to Y)$ | 上式的 currying 视角：参数固定在前，解释"参数树占第 0 位" |
 
@@ -24,8 +25,17 @@ number-depth: 0
 | $L \in \mathbb{R}$ | 标量损失（反向模式的最终出口） |
 | $\bar v \equiv \partial L / \partial v$ | 值 $v$ 的**余切**（cotangent / adjoint）；上杠即余切，故 $\bar y$、$\bar W$、$\bar z_2$ 同理 |
 | $dL,\ dX$ | 微分记号（一阶线性主部），用于矩阵微分推导 |
-| $\operatorname{VJP}_g(x, \bar y) = J_g(x)^\top \bar y$ | 向量-Jacobian 积：反向模式的原子运算，从不物化 $J_g$ 本身 |
+| $\bar x = \operatorname{VJP}_g(x, \bar y) = J_g(x)^\top \bar y$，其中 $y = g(x)$ | 向量-Jacobian 积：把输出处的余切 $\bar y$ 转换为输入处的余切 $\bar x$。转换矩阵依赖前向值 $x$，$J_g$ 本身从不物化 |
 | $\bar v = \sum_{\text{paths}} \cdots$ | 多路径使用时的全路径求和（值被多个下游共享时的梯度累加） |
+
+## 图与反向传播
+
+| 记号 | 含义 |
+|---|---|
+| $G = (V, E)$ | 计算图。$V$ 为 Tensor 节点集，$E$ 由 Tensor 间的引用关系隐式给出 |
+| $t_{\mathrm{in}}$, $t_{\mathrm{op}}$, $t_{\mathrm{args}}$ | Tensor $t$ 的 inputs、op、op.args——父节点集、算子、算子实参 |
+| $(t_k, \ldots, t_1)$ | $G$ 的逆拓扑序，$t_k$ 为输出节点 |
+| $C : V \rightharpoonup$ 余切 | 反向传播维护的部分映射：已收到余切的节点到其余切的对应 |
 
 ## 运算符
 
@@ -42,17 +52,17 @@ number-depth: 0
 | 记号 | 含义 |
 |---|---|
 | $W_i,\ b_i$ | 第 $i$ 层权重与偏置 |
-| $z_i$ | 第 $i$ 层线性输出（$z = aW + b\mathbf{1}^\top$） |
-| $a_i$ | 第 $i$ 层激活（$a = \operatorname{relu}(z)$）；$a_0 \equiv x$ |
+| $z_i$ | $z = aW + b\mathbf{1}^\top$，第 $i$ 层线性输出 |
+| $a_i$ | $a = \operatorname{relu}(z)$，第 $i$ 层激活；$a_0 \equiv x$ |
 | $p = \operatorname{softmax}(z_2)$ | 输出概率分布 |
-| $y$ | 标签（one-hot）；$\mathbf{1}$ 为全 1 向量 |
+| $y$ | 标签（one-hot）；$\mathbf{1}$ 为全 1 向量。本节的 $y$ 是标签，区别于通用记号中 $y = g(x)$ 的中间值 |
 
 ## 排版约定
 
 | 形态 | 指称 |
 |---|---|
 | 斜体数学（$x$、$\bar v$、$J$） | 数学对象 |
-| 等宽代码（`Tensor`、`lift`、`ops.sum`） | Python 对象（可跳转源码） |
+| 等宽代码（`tensor`、`lift`、`ops.sum`） | Python 对象（`Tensor` 大写出现时指类型） |
 | $\texttt{lift}$ 出现在公式中 | 公式语境里指代的代码对象，仍属 Python 世界（如 $\texttt{grad} \circ \texttt{grad}$） |
 
 ::: {.callout-note title="一处刻意的混用"}

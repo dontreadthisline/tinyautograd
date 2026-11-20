@@ -4,7 +4,7 @@ from typing import Any, NamedTuple
 
 import mlx.core as mx
 
-__all__ = ["Tensor", "Op"]
+__all__ = ["Tensor", "Op", "tensor"]
 
 type Array = mx.array
 
@@ -127,6 +127,17 @@ class Tensor:
         from tinyautograd.ops import lift
 
         return lift(lambda a, _idx=idx: a[_idx])(self)
+
+
+def tensor(value: object) -> Tensor:
+    """通用源构造器: 把标量/序列/mx 数组包装为叶子 Tensor。
+
+    公开的源入口只此一个 —— inputs/op 参数是框架内部的, 用户无法经此建边。
+    已是 Tensor 的输入原样返回 (与 wrap 同语义: 值就是它自己)。
+    """
+    if isinstance(value, Tensor):
+        return value
+    return Tensor(value)
 
 
 def wrap(value: object) -> Tensor:

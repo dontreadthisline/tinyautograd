@@ -1,0 +1,20 @@
+<style>
+#cg-back-landing {
+  display: block; font: 500 12.5px ui-monospace, "SF Mono", Menlo, monospace;
+  color: #3a4aa8; text-decoration: none; padding: 3px 0 6px;
+  border-bottom: 1px solid rgba(58, 74, 168, 0.16); margin-bottom: 6px;
+}
+#cg-back-landing:hover { color: #2c3a8c; }
+#cg-back-landing .arr { margin-right: 4px; }
+</style>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var nav = document.getElementById('quarto-sidebar');
+  if (!nav || document.getElementById('cg-back-landing')) return;
+  var a = document.createElement('a');
+  a.id = 'cg-back-landing';
+  a.href = '../';
+  a.innerHTML = '<span class="arr">&larr;</span> 落地页';
+  nav.insertBefore(a, nav.firstChild);
+});
+</script>

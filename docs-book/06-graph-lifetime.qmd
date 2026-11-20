@@ -54,7 +54,7 @@ $$
 测试 `test_autograd.py::test_no_grad_and_detach` 用这个例子同时验证两者：`no_grad` 块内的值是纯前向的（进不了反向引擎的 `reach`），`detach` 的值在图里但传导终止于它。任何表示法（PyTorch/JAX/MLX）都保留 stop-gradient 的等价物——因为它是**数学**，不是图管理。
 
 ::: {.callout-important title="本章要点"}
-`no_grad` 不是 autograd 的公理，是"图跨语句存活 + 无自动断链时机"这种表示法的**衍生品**。判断它该不该存在于你的框架，只需问一个问题：推理产生的图，由谁负责弄死？框架负责（MLX 断链 / JAX 作用域）则 API 消失，用户负责（PyTorch / tinyautograd 引用持有）则 API 必须公开。API 面是表示法的投影。
+`no_grad` 不是 autograd 的固有成分，是"图跨语句存活 + 无自动断链时机"这种表示法的**衍生品**。判断它该不该存在于你的框架，只需问一个问题：推理产生的图，由谁负责弄死？框架负责（MLX 断链 / JAX 作用域）则 API 消失，用户负责（PyTorch / tinyautograd 引用持有）则 API 必须公开。API 面是表示法的投影。
 :::
 
 ::: {.callout-caution title="练习"}

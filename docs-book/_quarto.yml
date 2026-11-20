@@ -12,7 +12,7 @@ book:
     - index.qmd
     - conventions.qmd
     - 01-chain-rule.qmd
-    - 02-value-centric.qmd
+    - 02-computation-graph.qmd
     - 03-dsl.qmd
     - 04-api.qmd
     - 05-lazy.qmd
@@ -21,8 +21,9 @@ book:
 
 format:
   indigo-atlas-html:
-    theme: [code-style.scss]
+    theme: [custom.scss]
     code-copy: true
+    include-in-header: back-to-landing.html
     html-math-method:
       method: katex
       url: "resources/libs/katex/"

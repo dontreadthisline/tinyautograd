@@ -2,13 +2,13 @@
 
 词汇三层:
   lift 系  — 可导算子: 有输入边, 反向外包 mx.vjp
-  const 系 — 常量源: 无输入边, 调用时刻定值 (随机语义由此编码)
+  源词汇   — 无输入边的叶子 (常量/随机); 内部 _source 生成, 用户可直接构造 Tensor
   派生词   — 由上述两类组合出的便利词 (relu)
 
-两个提升门 (函子对偶) 同时是用户的算子扩展点:
+算子扩展点 (边受控 —— 建边需要 Op 与 vjp 通路, 必须经门):
   lift(fn)       — 新的可导算子 (有输入边)
   lift_multi(fn) — 新的多输出可导算子 (输出共享 op)
-  const(fn)      — 新的常量/随机源 (叶子, 不参与求导)
+源无需门: 任何返回 Tensor 的函数即源 (造值无正确性风险, Tensor 公开构造即全部)。
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ __all__ = [
     # 提升门 (扩展点)
     "lift",
     "lift_multi",
-    "const",
     "compose",
     # lift 系: 可导算子
     "add",
@@ -53,10 +52,9 @@ __all__ = [
     "stack",
     "split",
     "broadcast_to",
-    # const 系: 常量源
+    # 源词汇: 叶子 (无输入边; 内部 _source 生成, 用户可直接 Tensor 构造)
     "zeros",
     "ones",
-    "full",
     "arange",
     "zeros_like",
     "ones_like",
@@ -113,15 +111,18 @@ def lift_multi(fn: ArrayFn) -> Callable[..., tuple[Any, ...]]:
     return wrapped
 
 
-def const(fn: ArrayFn) -> TensorFn:
-    """常量源: 无输入边, 产出调用时刻定值的叶子 (op=None)。"""
+def _source(fn: ArrayFn) -> TensorFn:
+    """内部便利: 把 mx 构造函数包装为源词汇 (叶子, op=None)。
+
+    不进公开 API —— 源的扩展不需要门, 任何返回 Tensor 的函数即源。
+    """
 
     def wrapped(*args: Any) -> Any:
-        from tinyautograd.tensor import Tensor
+        from tinyautograd.tensor import tensor
 
-        return Tensor(fn(*args))
+        return tensor(fn(*args))
 
-    wrapped.__name__ = getattr(fn, "__name__", "const")
+    wrapped.__name__ = getattr(fn, "__name__", "source")
     return wrapped
 
 
@@ -204,20 +205,19 @@ def broadcast_to(t: Any, shape: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# const 系: 常量源 (无输入边, 叶子)
+# 源词汇: 叶子 (无输入边; 内部 _source 生成, 用户可直接 Tensor 构造) (无输入边, 叶子)
 # ---------------------------------------------------------------------------
-zeros = const(mx.zeros)
-ones = const(mx.ones)
-full = const(mx.full)
-arange = const(mx.arange)
+zeros = _source(mx.zeros)
+ones = _source(mx.ones)
+arange = _source(mx.arange)
 
 
 def zeros_like(t: Any, dtype: Any = None) -> Any:
-    return const(mx.zeros)(t.shape, dtype or t.dtype)
+    return _source(mx.zeros)(t.shape, dtype or t.dtype)
 
 
 def ones_like(t: Any, dtype: Any = None) -> Any:
-    return const(mx.ones)(t.shape, dtype or t.dtype)
+    return _source(mx.ones)(t.shape, dtype or t.dtype)
 
 
 # ---------------------------------------------------------------------------

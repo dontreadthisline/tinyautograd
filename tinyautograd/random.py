@@ -1,6 +1,6 @@
 """random: 随机源 (与 ops 分离 —— 唯一带隐式状态的词汇)。
 
-const 编码: 每次调用重新采样, 产出的 Tensor 是叶子 (op=None),
+源词汇: 每次调用重新采样, 产出的 Tensor 是叶子 (op=None),
 不参与求导 —— 随机量参与前向, 梯度绕它而行。
 """
 
@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import mlx.core as mx
 
-from tinyautograd.ops import const
+from tinyautograd.ops import _source
 
-__all__ = ["seed", "normal", "uniform"]
+__all__ = ["seed", "normal"]
 
 seed = mx.random.seed
-normal = const(mx.random.normal)
-uniform = const(mx.random.uniform)
+normal = _source(mx.random.normal)

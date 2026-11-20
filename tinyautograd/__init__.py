@@ -2,12 +2,12 @@
 
 from tinyautograd import ops, random
 from tinyautograd.autograd import detach, eval, grad, no_grad, value_and_grad, vjp
-from tinyautograd.ops import const, lift, lift_multi
-from tinyautograd.tensor import Op, Tensor
+from tinyautograd.ops import lift, lift_multi
+from tinyautograd.tensor import Tensor, tensor
 
 __all__ = [
     "Tensor",
-    "Op",
+    "tensor",
     "ops",
     "random",
     "vjp",
@@ -18,7 +18,6 @@ __all__ = [
     "detach",
     "lift",
     "lift_multi",
-    "const",
 ]
 
 __version__ = "0.2.0"
