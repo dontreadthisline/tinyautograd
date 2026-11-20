@@ -9,3 +9,7 @@ docs-book/.quarto/
 
 # 系统杂项
 .DS_Store
+
+# 本地演示页 (试验场, 不部署不追踪)
+docs-book/sketchbook.html
+docs-book/lab.html
