@@ -1,28 +1,27 @@
-// Indigo Atlas 主题：靛蓝配色 + 图册(atlas)满宽版心
-// 参考 aaai.latere.ai 的 palette 变量体系与 atlas layout（--article-max: 100%）。
-// 约束：字体、字号、行高、公式渲染均与 genesis-book 一致（_typography.scss 原样复用），
-// 只改配色与版心宽度。
+// Indigo Atlas v0.2: 靛蓝配色 + 满宽版心 + 手绘原语 + 教学排版
+// 基底: litera; 版式参考 aaai.latere.ai; 手绘语言 sketch.js
 //
-// 结构约定：@import 'typography' 必须置于 litera 默认之后（Quarto 将本文件内联进主题
-// 大 SCSS，import 输出跟随书写位置）；需要覆盖 typography 的配色规则写在 import 之后。
+// 定制层: 代码块左缘线 / 行内 code 透明底 / Algorithm 环境 / 字体统一
 
 /*-- scss:defaults --*/
 $font-family-serif: "Noto Serif SC", "Songti SC", "STSong", "Source Han Serif SC", serif;
 $font-family-sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+$font-family-sans-serif: $font-family-sans;
+$font-family-base: $font-family-sans;
 
 /*-- scss:rules --*/
 
 // ---- 靛蓝配色变量 ----
 :root {
-  --ia-bg: #f7f8fb;            // 页面底：极淡靛灰
-  --ia-panel: #edf0f8;         // 目录面板：靛灰
-  --ia-accent: #3a4aa8;        // 靛蓝主色（链接/当前项/强调）
-  --ia-accent-deep: #2c3a8c;   // hover 深靛
+  --ia-bg: #f7f8fb;
+  --ia-panel: #edf0f8;
+  --ia-accent: #3a4aa8;
+  --ia-accent-deep: #2c3a8c;
   --ia-border: rgba(58, 74, 168, 0.16);
-  --gen-reading-max: 66rem;    // 图册版心：阅读态容器比默认(58rem)更宽
+  --gen-reading-max: 66rem;
 }
 
-// ---- 版式：atlas 满宽版心（导航态正文列 50rem，比默认 46rem 宽） ----
+// ---- 版式: atlas 满宽版心 ----
 @media (min-width: 992px) {
   :root { --gen-col: 250px; }
   #quarto-content {
@@ -52,7 +51,7 @@ $font-family-sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans 
     grid-column: 2 !important;
     justify-self: center;
     width: 100%;
-    max-width: 50rem !important;   // atlas: 版心加宽 46 -> 50rem
+    max-width: 50rem !important;
   }
 }
 
@@ -70,7 +69,7 @@ $font-family-sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans 
 
 ul.task-list li { margin: 0.3em 0; }
 
-// 暗色模式配色反转
+// 暗色模式
 .dark {
   --ia-bg: #12131a;
   --ia-panel: #171a26;
@@ -79,11 +78,10 @@ ul.task-list li { margin: 0.3em 0; }
   --ia-border: rgba(151, 165, 240, 0.18);
 }
 
-// 正文排版层（字体/行高/字号/公式渲染，与 genesis-book 完全一致）：
-// 必须置于 litera 默认之后，故在文件末尾 import
+// 正文排版层 (必须置于 litera 默认之后, 故在文件末尾 import)
 @import 'typography';
 
-// ---- 配色覆盖（在 typography 之后；选择器带 .table 类赢过 bootstrap 的 .table 规则） ----
+// ---- 配色覆盖 ----
 body { background-color: var(--ia-bg); }
 a { color: var(--ia-accent); }
 a:hover { color: var(--ia-accent-deep); }
@@ -93,3 +91,51 @@ table.table, table {
   border-bottom: 2px solid var(--ia-accent);
 }
 table.table th, table th { border-bottom-color: var(--ia-border); }
+
+// ---- 块级代码: 靛蓝左缘线 + 淡靛底 ----
+div.sourceCode {
+  background: #fbfcfe;
+  border: 1px solid var(--ia-border);
+  border-left: 3px solid var(--ia-accent);
+  border-radius: 6px;
+}
+
+// ---- 行内 code: 透明底 + 正文字色 (不与正文争抢) ----
+p code:not([class^="sourceCode"]),
+li code:not([class^="sourceCode"]),
+td code:not([class^="sourceCode"]),
+dd code:not([class^="sourceCode"]) {
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  font-family: var(--gen-font-mono);
+  color: inherit;
+}
+
+// ---- Algorithm 环境: LaTeX 浮动体经典排版 (上下横线 + 衬线标题) ----
+.theorem.algorithm {
+  border: none;
+  border-top: 2px solid #343a40;
+  border-bottom: 2px solid #343a40;
+  background: transparent;
+  padding: 0.4em 0.2em 0.3em;
+  margin: 1.6em 0 1.2em;
+}
+.theorem.algorithm .theorem-title {
+  font-family: var(--gen-font-serif);
+  font-size: 1.02em;
+}
+.theorem.algorithm .theorem-title strong { font-weight: 600; }
+.theorem.algorithm .katex-display { margin: 0.5em 0 0.2em; }
+.theorem.algorithm .katex { font-size: 1.02em; }
+.theorem.algorithm .sourceCode {
+  background: transparent;
+  border: none;
+  border-left: none;
+  border-radius: 0;
+  padding: 0.2em 0 0;
+}
+
+// ---- litera 正文 serif 覆盖: main 显式继承 sans ----
+main { font-family: var(--gen-font-sans); }
+p { font-family: inherit; }
