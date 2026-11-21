@@ -49,10 +49,6 @@ else
   (cd docs-book && "$QUARTO_BIN" render >/dev/null)
 fi
 
-# ---- 3.4 复制扩展资产 (quarto 不自动复制 extension resources/ 到输出) ----
-cp -r docs-book/_extensions/dontreadthisline/indigo-atlas/resources/ \
-      docs-book/book/resources/ 2>/dev/null || true
-
 # ---- 3.5 组装: landing -> index.html (quarto 会删根下 index.html, 构建后重新落位) ----
 cp docs-book/landing.html docs-book/index.html
 
