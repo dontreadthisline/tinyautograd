@@ -6,11 +6,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import mlx.core as mx
 
 from tinyautograd.ops import _source
 
+if TYPE_CHECKING:
+    from tinyautograd.tensor import TensorFn
+
 __all__ = ["seed", "normal"]
 
 seed = mx.random.seed
-normal = _source(mx.random.normal)
+normal: TensorFn = _source(mx.random.normal)

@@ -1,42 +1,40 @@
-"""autograd:"""
+"""autograd: 反向引擎 —— 拓扑剪枝、单步 vjp、余切接力。
+
+与 runtime (前向引擎 + 门) 对等; 详见各模块 docstring。
+"""
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import Any, Callable, Generator
+from typing import Any, Callable
 
-import mlx.core as mx
-
-from tinyautograd import ops
+from tinyautograd.ops import (
+    mx_add,
+    mx_ones_like,
+    mx_vjp,
+    mx_zeros_like,
+)
 from tinyautograd.pytree import PyTree, flatten, substitute
-from tinyautograd.tensor import Tensor
+from tinyautograd.runtime import eval
+from tinyautograd.tensor import Array, ArrayFn, MultiArrayFn, Tensor
 
-__all__ = ["vjp", "value_and_grad", "grad", "eval", "no_grad", "detach"]
+__all__ = ["vjp", "value_and_grad", "grad"]
 
 
-def _vjp(
-    fn: Callable[..., Any], args: list[Any], cotans: Any
-) -> list[Any]:
-    """单算子局部反传: 外包 mx.vjp (cotans 单个或 list, 支持多输出)。"""
+def _single_step_vjp(
+    fn: ArrayFn | MultiArrayFn,
+    args: list[Array],
+    cotans: Array | list[Array],
+) -> list[Array]:
+    """单算子局部反传: 外包 mx_vjp (cotans 单个或 list, 支持多输出)。"""
     if not isinstance(cotans, (list, tuple)):
         cotans = [cotans]
-    return mx.vjp(fn, list(args), list(cotans))[1]
+    return mx_vjp(fn, args, cotans)[1]
 
 
-def _backward(
-    out: Tensor | PyTree[Tensor],
-    init_cotans: list[Any],
-    leaves: list[Tensor],
-) -> dict[int, Any]:
-    """从 out 出发反向传播, 返回 {id(leaf): 梯度}。叶子无梯度时缺项。"""
-    out_leaves = flatten(out)
-    if len(out_leaves) != len(init_cotans):
-        raise ValueError(
-            f"[vjp] 输出 Tensor 数 ({len(out_leaves)}) "
-            f"与余切数量 ({len(init_cotans)}) 不匹配。"
-        )
-    leaf_ids = {id(t) for t in leaves}
-
+def _topo_pruned(
+    roots: list[Tensor], leaf_ids: set[int]
+) -> tuple[list[Tensor], set[int]]:
+    """反向用: 后序遍历, 只收可达目标叶的节点 (剪枝), 返回 (order, reach)。"""
     order: list[Tensor] = []
     visited: set[int] = set()
     reach: set[int] = set()
@@ -55,44 +53,53 @@ def _backward(
             order.append(t)
         return r
 
-    for t in out_leaves:
+    for t in roots:
         dfs(t)
-    cotan_map: dict[int, Any] = {}
-    for t, c in zip(out_leaves, init_cotans):
-        cotan_map[id(t)] = c
+    return order, reach
+
+
+def _backward(
+    out: Tensor | PyTree[Tensor],
+    init_cotans: list[Array],
+    leaves: list[Tensor],
+) -> dict[int, Array]:
+    """从 out 出发反向传播, 返回 {id(leaf): 梯度}。叶子无梯度时缺项。"""
+    out_leaves = flatten(out)
+    if len(out_leaves) != len(init_cotans):
+        raise ValueError(
+            f"[vjp] 输出 Tensor 数 ({len(out_leaves)}) "
+            f"与余切数量 ({len(init_cotans)}) 不匹配。"
+        )
+    leaf_ids = {id(t) for t in leaves}
+    if any(not t._computed for t in out_leaves):
+        eval(*out_leaves)  # VJP 在前向点取值: 反向需要前向值, 隐式前向
+    order, reach = _topo_pruned(out_leaves, leaf_ids)
+    cotans_map: dict[int, Array] = {
+        id(t): cotan for t, cotan in zip(out_leaves, init_cotans)
+    }
     for t in reversed(order):
-        if t.op is None:
+        c = cotans_map.get(id(t))
+        if t.op is None or c is None:
             continue
-        op = t.op
-        if op.outputs:
-            # 多输出: 每个输出独立贡献自己的 cotan, 其余补零
-            c = cotan_map.get(id(t))
-            if c is None:
-                continue
-            cotans = [mx.zeros_like(arr) for arr in op.outputs]
-            cotans[t.index] = c
-            vjps = _vjp(op.fn, list(op.args), cotans)
-        else:
-            # 单输出
-            c = cotan_map.get(id(t))
-            if c is None:
-                continue
-            vjps = _vjp(op.fn, list(op.args), c)
+        outputs = t.op.outputs or (t._array,)
+        cotans = [
+            c if i == t.index else mx_zeros_like(a) for i, a in enumerate(outputs)
+        ]
+        vjps = _single_step_vjp(t.op.fn, [p._array for p in t.inputs], cotans)
         for p, g in zip(t.inputs, vjps):
-            if id(p) not in reach:  # 跳过不需要计算的节点
-                continue
-            if id(p) in cotan_map:  # 全微分路径的加和
-                cotan_map[id(p)] = mx.add(cotan_map[id(p)], g)
-            else:
-                cotan_map[id(p)] = g  # 去更新输入节点的余切,供下一步使用
-    return {i: cotan_map[i] for i in leaf_ids if i in cotan_map}
+            if id(p) in reach:
+                prev = cotans_map.get(id(p))
+                cotan = g if prev is None else mx_add(g, prev)
+                cotans_map[id(p)] = cotan
+
+    return {idx: cotans_map[idx] for idx in leaf_ids if idx in cotans_map}
 
 
 def vjp(
     fun: Callable[..., Tensor | PyTree[Tensor]],
-    primals: Any,
-    cotangents: Any,
-) -> tuple[Tensor | Any, Any]:
+    primals: Tensor | PyTree[Tensor],
+    cotangents: Tensor | PyTree[Tensor],
+) -> tuple[Tensor | PyTree[Tensor], PyTree[Tensor]]:
     """vector-Jacobian product (原子层)。
 
     primals 作为 fun 的位置参数传入 (单个或元组), 全部 Tensor 叶均为求导目标;
@@ -128,7 +135,7 @@ def value_and_grad[**P](
         if not isinstance(out, Tensor) or out.size != 1:
             shape = getattr(out, "shape", type(out).__name__)
             raise ValueError(f"[value_and_grad] fun 须返回标量 Tensor, 得到: {shape}")
-        grads = _backward(out, [mx.ones_like(out._array)], targets)
+        grads = _backward(out, [mx_ones_like(out._array)], targets)
         mapping = {i: Tensor(g) for i, g in grads.items()}
         trees = tuple(substitute(args[n], mapping) for n in nums)
         grad_tree = trees[0] if len(trees) == 1 else trees
@@ -148,26 +155,3 @@ def grad[**P](
         return vg(*args, **kwargs)[1]
 
     return wrapped
-
-
-def eval(*args: Any) -> None:
-    """显式离开 DSL 算账 (惰性求值下的唯一显式门)。"""
-    arrays = [t._array for a in args for t in flatten(a)]
-    if arrays:
-        mx.eval(*arrays)
-
-
-@contextmanager
-def no_grad() -> Generator[None, None, None]:
-    """上下文: 算子不建边 (纯前向 / 推理)。"""
-    prev = ops._no_grad
-    ops._no_grad = True
-    try:
-        yield
-    finally:
-        ops._no_grad = prev
-
-
-def detach(t: Tensor) -> Tensor:
-    """同值、无父节点的新 Tensor (等价 stop_gradient)。"""
-    return Tensor(t._array)

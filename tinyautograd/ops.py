@@ -1,22 +1,23 @@
-"""ops: 全部算子的门面 (静态定义, 绑定 mlx)。
-
-词汇三层:
-  lift 系  — 可导算子: 有输入边, 反向外包 mx.vjp
-  源词汇   — 无输入边的叶子 (常量/随机); 内部 _source 生成, 用户可直接构造 Tensor
-  派生词   — 由上述两类组合出的便利词 (relu)
-
-算子扩展点 (边受控 —— 建边需要 Op 与 vjp 通路, 必须经门):
-  lift(fn)       — 新的可导算子 (有输入边)
-  lift_multi(fn) — 新的多输出可导算子 (输出共享 op)
-源无需门: 任何返回 Tensor 的函数即源 (造值无正确性风险, Tensor 公开构造即全部)。
-"""
+"""ops: 全部算子的门面 (静态定义, 绑定 mlx)。后端接触面收敛于此 (与 tensor),
+数组层机制桥 (mx_*) 供变换层使用, 不进用户面。"""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import reduce
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import mlx.core as mx
+
+if TYPE_CHECKING:
+    from tinyautograd.tensor import (
+        Array,
+        ArrayFn,
+        MultiArrayFn,
+        Tensor,
+        TensorFn,
+        TensorLike,
+    )
 
 __all__ = [
     # 提升门 (扩展点)
@@ -62,9 +63,6 @@ __all__ = [
     "relu",
 ]
 
-ArrayFn = Callable[..., Any]
-TensorFn = Callable[..., Any]
-
 _no_grad = False
 
 
@@ -74,37 +72,41 @@ def lift(fn: ArrayFn) -> TensorFn:
     no_grad 上下文中不建边 (纯前向)。
     """
 
-    def wrapped(*args: Any) -> Any:
+    def wrapped(*args: TensorLike) -> Tensor:
         from tinyautograd.tensor import Op, Tensor, wrap
 
         ts = tuple(wrap(a) for a in args)
-        arrays = tuple(a._array for a in ts)
         if _no_grad:
+            arrays = tuple(t._ensure() for t in ts)
             return Tensor(fn(*arrays))
-        return Tensor(fn(*arrays), inputs=ts, op=Op(fn, arrays))
+        node = fn(*(t._array for t in ts))
+        ph = mx.zeros(node.shape, node.dtype)
+        return Tensor(ph, inputs=ts, op=Op(fn), computed=False)
 
     wrapped.__name__ = getattr(fn, "__name__", "lifted")
     return wrapped
 
 
-def lift_multi(fn: ArrayFn) -> Callable[..., tuple[Any, ...]]:
+def lift_multi(fn: MultiArrayFn) -> Callable[..., tuple[Tensor, ...]]:
     """把"返回 tuple/list"的 mlx 函数提升为多输出可导算子。
 
     多个输出共享同一个 op (index 区分), 反传时每个输出独立贡献自己的
     cotan, 梯度累加到输入。
     """
 
-    def wrapped(*args: Any) -> tuple[Any, ...]:
+    def wrapped(*args: TensorLike) -> tuple[Tensor, ...]:
         from tinyautograd.tensor import Op, Tensor, wrap
 
         ts = tuple(wrap(a) for a in args)
-        arrays = tuple(a._array for a in ts)
         if _no_grad:
+            arrays = tuple(t._ensure() for t in ts)
             return tuple(Tensor(x) for x in fn(*arrays))
-        outs = tuple(fn(*arrays))
-        op = Op(fn, arrays, outs)
+        nodes = tuple(fn(*(t._array for t in ts)))  # 临时, 借 shape
+        placeholders = tuple(mx.zeros(n.shape, n.dtype) for n in nodes)
+        op = Op(fn, placeholders)  # 多输出: outputs 即占位 (形状参照)
         return tuple(
-            Tensor(x, inputs=ts, op=op, index=i) for i, x in enumerate(outs)
+            Tensor(ph, inputs=ts, op=op, index=i, computed=False)
+            for i, ph in enumerate(placeholders)
         )
 
     wrapped.__name__ = getattr(fn, "__name__", "lifted_multi")
@@ -117,7 +119,8 @@ def _source(fn: ArrayFn) -> TensorFn:
     不进公开 API —— 源的扩展不需要门, 任何返回 Tensor 的函数即源。
     """
 
-    def wrapped(*args: Any) -> Any:
+    def wrapped(*args: Any) -> Tensor:
+        # 参数是透传给 mx 构造函数的 shape/dtype 等 (域由被包装函数定义), 不参与 wrap
         from tinyautograd.tensor import tensor
 
         return tensor(fn(*args))
@@ -129,6 +132,17 @@ def _source(fn: ArrayFn) -> TensorFn:
 def compose(*fns: Callable[..., Any]) -> Callable[..., Any]:
     """函数组合子: compose(f, g)(x) = f(g(x)), 即数学上的 f∘g。"""
     return reduce(lambda f, g: lambda *a, **k: f(g(*a, **k)), fns)
+
+
+# ---------------------------------------------------------------------------
+# 数组层机制桥: 变换层 (autograd) 的后端通路, 不建边、不进 __all__。
+# lift 的反向本就外包 mx.vjp —— 机制与词汇同地存放。
+# ---------------------------------------------------------------------------
+mx_vjp = mx.vjp
+mx_add = mx.add
+mx_zeros_like = mx.zeros_like
+mx_ones_like = mx.ones_like
+mx_eval = mx.eval
 
 
 # ---------------------------------------------------------------------------
@@ -156,72 +170,74 @@ matmul = lift(mx.matmul)
 transpose = lift(mx.transpose)
 
 
-def _rsqrt(a: Any) -> Any:
+def _rsqrt(a: Array) -> Array:
     return mx.reciprocal(mx.sqrt(a))
 
 
 rsqrt = lift(_rsqrt)
 
 
-# ---------------------------------------------------------------------------
-# lift 系: 带元数据参数的算子 (闭包固定元数据后提升, op.args 可完整重放)
-# ---------------------------------------------------------------------------
-def sum(t: Any, axis: Any = None, keepdims: bool = False) -> Any:
+def sum(
+    t: TensorLike, axis: int | tuple[int, ...] | None = None, keepdims: bool = False
+) -> Tensor:
     """轴约简: sum(x) / sum(x, axis) / sum(x, axis, keepdims)。"""
     return lift(lambda a: mx.sum(a, axis=axis, keepdims=keepdims))(t)
 
 
-def mean(t: Any, axis: Any = None, keepdims: bool = False) -> Any:
+def mean(
+    t: TensorLike, axis: int | tuple[int, ...] | None = None, keepdims: bool = False
+) -> Tensor:
     """轴平均: mean(x) / mean(x, axis) / mean(x, axis, keepdims)。"""
     return lift(lambda a: mx.mean(a, axis=axis, keepdims=keepdims))(t)
 
 
-def max(t: Any, axis: Any = None, keepdims: bool = False) -> Any:
+def max(
+    t: TensorLike, axis: int | tuple[int, ...] | None = None, keepdims: bool = False
+) -> Tensor:
     """轴最大: max(x) / max(x, axis) / max(x, axis, keepdims)。"""
     return lift(lambda a: mx.max(a, axis=axis, keepdims=keepdims))(t)
 
 
-def reshape(t: Any, shape: Any) -> Any:
+def reshape(t: TensorLike, shape: int | tuple[int, ...]) -> Tensor:
     """形状重排, shape 接受 int 或 tuple。"""
-    return lift(
-        lambda a: mx.reshape(a, (shape,) if isinstance(shape, int) else shape)
-    )(t)
+    return lift(lambda a: mx.reshape(a, (shape,) if isinstance(shape, int) else shape))(
+        t
+    )
 
 
-def stack(tensors: Any, axis: int = 0) -> Any:
+def stack(tensors: Sequence[TensorLike], axis: int = 0) -> Tensor:
     """多 Tensor 沿新轴堆叠: stack([a, b], axis)。"""
     ts = tuple(tensors)
     return lift(lambda *arrs: mx.stack(list(arrs), axis=axis))(*ts)
 
 
-def split(a: Any, indices: Any, axis: int = 0) -> tuple[Any, ...]:
+def split(
+    a: TensorLike, indices: int | Sequence[int], axis: int = 0
+) -> tuple[Tensor, ...]:
     """单 Tensor 沿轴切多份 (lift_multi: 多输出共享 op)。"""
-    return lift_multi(lambda arr: mx.split(arr, indices, axis=axis))(a)
+    # mlx stub 将模块级 mx.split 误标为 -> array (方法版为 list[array]), 实际返回 list
+    return lift_multi(lambda arr: mx.split(arr, indices, axis=axis))(a)  # type: ignore[arg-type]
 
 
-def broadcast_to(t: Any, shape: Any) -> Any:
+def broadcast_to(t: TensorLike, shape: int | tuple[int, ...]) -> Tensor:
     """广播到目标形状 (反向由 mx.vjp 自动归约)。"""
-    return lift(lambda arr: mx.broadcast_to(arr, shape))(t)
+    return lift(
+        lambda arr: mx.broadcast_to(arr, (shape,) if isinstance(shape, int) else shape)
+    )(t)
 
 
-# ---------------------------------------------------------------------------
-# 源词汇: 叶子 (无输入边; 内部 _source 生成, 用户可直接 Tensor 构造) (无输入边, 叶子)
-# ---------------------------------------------------------------------------
 zeros = _source(mx.zeros)
 ones = _source(mx.ones)
 arange = _source(mx.arange)
 
 
-def zeros_like(t: Any, dtype: Any = None) -> Any:
+def zeros_like(t: Tensor, dtype: mx.Dtype | None = None) -> Tensor:
     return _source(mx.zeros)(t.shape, dtype or t.dtype)
 
 
-def ones_like(t: Any, dtype: Any = None) -> Any:
+def ones_like(t: Tensor, dtype: mx.Dtype | None = None) -> Tensor:
     return _source(mx.ones)(t.shape, dtype or t.dtype)
 
 
-# ---------------------------------------------------------------------------
-# 派生词: 由基本词汇组合的便利词
-# ---------------------------------------------------------------------------
-def relu(t: Any) -> Any:
+def relu(t: TensorLike) -> Tensor:
     return maximum(t, 0.0)
