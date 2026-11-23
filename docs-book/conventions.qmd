@@ -33,7 +33,7 @@ number-depth: 0
 | 记号 | 含义 |
 |---|---|
 | $G = (V, E)$ | 计算图。$V$ 为 Tensor 节点集，$E$ 由 Tensor 间的引用关系隐式给出 |
-| $t_{\mathrm{in}}$, $t_{\mathrm{op}}$, $t_{\mathrm{args}}$ | Tensor $t$ 的 inputs、op、op.args——父节点集、算子、算子实参 |
+| $t_{\mathrm{in}}$, $t_{\mathrm{op}}$, $\mathrm{val}(t_{\mathrm{in}})$ | Tensor $t$ 的 inputs、op，及 inputs 各父节点的当前真值（重放输入，旧称 $t_{\mathrm{args}}$） |
 | $(t_k, \ldots, t_1)$ | $G$ 的逆拓扑序，$t_k$ 为输出节点 |
 | $C : V \rightharpoonup$ 余切 | 反向传播维护的部分映射：已收到余切的节点到其余切的对应 |
 

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Jacobian 连乘与反向流水线</title>
+<link rel="stylesheet" href="libs/katex/katex.min.css">
+<script src="libs/katex/katex.min.js"></script>
+<script src="js/sketch.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  .tx { display: inline-block; line-height: 1.1; }
+</style>
+</head>
+<body>
+<svg id="jc" viewBox="0 0 640 350" width="640" height="350" xmlns="http://www.w3.org/2000/svg"></svg>
+<script>
+window.addEventListener('load', function () {
+  if (typeof Sketch === 'undefined') return;
+  const svg = document.getElementById('jc');
+  const s = Sketch(svg);
+  const P = s.PALETTE;
+  const NS = 'http://www.w3.org/2000/svg';
+
+  /* KaTeX 标注: foreignObject 内渲染, 测量后按锚点定位 (字体就绪后再校准一次) */
+  const labels = [];
+  function tex(x, y, latex, { color = P.deep, fs = 15, anchor = 'middle', weight = 500 } = {}) {
+    const fo = document.createElementNS(NS, 'foreignObject');
+    const div = document.createElement('div');
+    div.className = 'tx';
+    div.style.cssText = `color:${color};font-size:${fs}px;font-weight:${weight}`;
+    katex.render(latex, div, { throwOnError: false });
+    fo.appendChild(div);
+    svg.appendChild(fo);
+    labels.push({ fo, div, x, y, anchor });
+    place({ fo, div, x, y, anchor });
+    return fo;
+  }
+  function place({ fo, div, x, y, anchor }) {
+    const w = div.getBoundingClientRect().width, h = div.getBoundingClientRect().height;
+    fo.setAttribute('width', Math.ceil(w) + 2);
+    fo.setAttribute('height', Math.ceil(h) + 2);
+    fo.setAttribute('x', anchor === 'middle' ? x - (w + 2) / 2 : anchor === 'start' ? x : x - w - 2);
+    fo.setAttribute('y', y - h / 2);
+  }
+  if (document.fonts && document.fonts.ready)
+    document.fonts.ready.then(() => labels.forEach(place));
+
+  function mat(x, y, w, h, stroke) {
+    s.path(`M${x} ${y} L ${x + w} ${y} L ${x + w} ${y + h} L ${x} ${y + h} Z`, { stroke, width: 1.5 });
+    s.path(`M${x - 4} ${y} L ${x - 4} ${y + h}`, { stroke, width: 1.3, rough: false });
+    s.path(`M${x + w + 4} ${y} L ${x + w + 4} ${y + h}`, { stroke, width: 1.3, rough: false });
+  }
+  function colvec(x, ytop, color, strong) {
+    for (let i = 0; i < 3; i++)
+      s.path(`M${x} ${ytop + i * 11} L ${x + 10} ${ytop + i * 11} L ${x + 10} ${ytop + i * 11 + 8} L ${x} ${ytop + i * 11 + 8} Z`,
+             { stroke: strong ? color : 'rgba(58,74,168,.5)', width: 1.2, fill: strong ? color : 'none', rough: false });
+  }
+
+  /* ---- 上排: J_1·J_2·J_3·J_4 逐项连乘, 物化大矩阵, 答案只是一列 ---- */
+  const xs = [72, 164, 256, 348], w0 = 34, hs = [40, 64, 64, 44], Y1 = 76;
+  hs.forEach((h, i) => {
+    mat(xs[i], Y1 - h / 2, w0, h, 'rgba(58,74,168,.7)');
+    tex(xs[i] + w0 / 2, Y1 + h / 2 + 18, `J_{${i + 1}}`, { fs: 14 });
+    if (i < 3) tex(xs[i] + w0 + 26, Y1, '\\cdot', { color: P.dim, fs: 16 });
+  });
+  s.path('M452 26 L556 26 L556 128 L452 128 Z', { stroke: 'rgba(191,135,0,.5)', width: 1.4, fill: 'rgba(191,135,0,.06)' });
+  tex(504, 66, 'd_i \\times d_j', { color: '#bf8700', fs: 13 });
+  s.path('M556 77 L 584 77', { stroke: 'rgba(191,135,0,.6)', width: 1.4, arrow: true });
+  colvec(594, Y1 - 16, '#bf8700', true);
+  tex(600, Y1 + 34, '\\nabla_x L', { color: '#bf8700', fs: 14, weight: 600 });
+  tex(322, 152, 'O\\bigl(\\textstyle\\sum_i d_i\\, d_{i+1}\\, d_{i+2}\\bigr)', { color: '#bf8700', fs: 13.5 });
+
+  /* ---- 下排: 反向流水线 x̄ᵢ → [Jᵢᵀ] → x̄ᵢ₋₁, 每个向量只画一次 ---- */
+  const Y2 = 252;
+  const vecs = [
+    [70, '\\bar{x}_4', true], [192, '\\bar{x}_3', false], [314, '\\bar{x}_2', false],
+    [436, '\\bar{x}_1', false], [560, '\\bar{x}_0 = \\nabla_x L', true],
+  ];
+  const matX = [92, 214, 336, 458];
+  const matMeta = [['J_4^{\\top}', 'x_3'], ['J_3^{\\top}', 'x_2'], ['J_2^{\\top}', 'x_1'], ['J_1^{\\top}', 'x_0']];
+  matX.forEach((mx, i) => {
+    mat(mx, Y2 - hs[3 - i] / 2, 34, hs[3 - i], 'rgba(58,74,168,.7)');
+    tex(mx + 17, Y2 + hs[3 - i] / 2 + 17, `${matMeta[i][0]}\\bigl(${matMeta[i][1]}\\bigr)`, { fs: 11.5 });
+  });
+  vecs.forEach(([x, name, hot]) => {
+    colvec(x, Y2 - 16, P.green, hot);
+    tex(x + 5, Y2 + 27, name, { color: P.green, fs: 13, weight: hot ? 600 : 400 });
+  });
+  matX.forEach((mx, i) => {
+    const out = [192, 314, 436, 560][i];
+    s.path(`M${mx + 38} ${Y2} L ${out - 5} ${Y2}`, { stroke: P.green, width: 1.5, arrow: true, rough: false });
+  });
+  s.pulse('M70 ' + Y2 + ' L 568 ' + Y2, { t0: 0.5, travel: 4.2, period: 9, color: P.green, size: 4 });
+  tex(320, 322, 'O\\bigl(\\textstyle\\sum_i d_i\\, d_{i+1}\\bigr)', { color: P.green, fs: 14 });
+});
+</script>
+</body>
+</html>

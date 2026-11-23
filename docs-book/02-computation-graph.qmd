@@ -14,7 +14,7 @@
 
 于是前向与反向不是两台机器，而是同一件事在两个方向上的重复：**调用算子，图生长**。前向长值图，反向长梯度图，两张图通过 VJP 咬合——VJP 以前向值为实参，梯度图的每个节点挂在值图的对应节点上。参数更新 $v - \mathrm{lr} \cdot g$ 也是算子调用，继续建图（第 3 章展开它的完整含义）。
 
-两张图都只生长、不计算。计算发生在唯一的出口：`eval(loss, grads)` 一次调用，两张图同批物化——loss 是值图的根，grads 是梯度图的叶。**一体两面**：把它写成一次调用之所以合法，正因为它们从来不是两次计算。出口的完整语义（谁触发、何时结算、执行外包给谁）是第 5 章的主题；本章先看图本身。
+两张图都只生长、不计算。计算发生在唯一的出口：`eval(loss, grads)` 一次调用，两张图同批物化——loss 是值图的根，grads 是梯度图的叶。**一体两面**：把它写成一次调用之所以合法，正因为它们从来不是两次计算。出口的完整语义（谁触发、何时结算、执行由谁承担）是第 5 章的主题；本章先看图本身。
 
 ## 图长在值上
 
@@ -41,31 +41,31 @@ tinyautograd 的回答是**值中心表示**——Tensor 一身三职。核心�
 
 ```python
 class Op(NamedTuple):
-    fn: Any                     # MLX 函数 (前向)
-    args: tuple[Array, ...]     # 前向实参 (反向时 mx.vjp 的 primals)
-    outputs: tuple[Array, ...] = ()   # 多输出算子共享时非空
+    fn: ArrayFn | MultiArrayFn        # 后端函数 (重放对象: 前向求值与 mx.vjp 共用)
+    outputs: tuple[Array, ...] = ()   # 多输出算子各输出的占位数组 (形状参照); 单输出哨兵 ()
 
 class Tensor:
-    __slots__ = ("_array", "inputs", "op", "index")
-    _array: Array               # 惰性本体
-    inputs: tuple[Tensor, ...]  # 父节点 = 图的边
+    __slots__ = ("_array", "inputs", "op", "index", "_computed")
+    _array: Array               # 占位 (shape 已知, 值未算, 无依赖) 或真值
+    inputs: tuple[Tensor, ...]  # 父节点 = 图的边 (重放输入的唯一来源)
     op: Op | None               # None 即叶子
     index: int                  # 多输出共享 op 时的位置
+    _computed: bool             # 求值标记 (值读门的判据)
 ```
 
 三个角色对应源码里的三个成员：
 
 | 角色 | 成员 | 数学含义 |
 |---|---|---|
-| 值 | `_array` | 它自己就是一个（惰性的）数组 |
+| 值 | `_array` | 占位数组 (shape 已知、值未算) 或真值——`_computed` 标记所处阶段 |
 | 图节点 | `inputs`, `op` | 它记得"我是哪些值经过哪个算子得到的" |
 | 线性映射载体 |  通过 Tensor 之间的引用关系隐式构建 | forward/_backward 可遍历图 |
 
-`Op` 是 `NamedTuple(fn, args, outputs)`——`fn` 是后端函数、`args` 是前向实参、`outputs` 用于多输出算子共享。注意 `Op` 里**只有函数与实参，没有梯度**：局部导数从不物化，需要时由 `fn` 与 `args` 现场调用 VJP（第 1 章的"永不物化 Jacobian"在数据结构层面就已成立）。
+图的全部信息都长在 Tensor 上：`inputs` 是边（指向父节点），`op` 指向产生这个值的算子调用记录。`Op(fn, outputs)` 只有两样东西：`fn` 是后端函数，前向求值与反向 `mx.vjp` 共用它作重放对象。注意 `Op` 里**没有梯度也没有实参**——局部导数从不物化，需要时由 `fn` 与 `inputs` 的当前真值现场调用 VJP（第 1 章的"永不物化 Jacobian"在数据结构层面成立）；实参也不必存：Tensor 不可变，`_array` 只会被替换为数值恒等的真值（第 5 章），因此 `[p._array for p in t.inputs]` 永远是那次调用实参的当前形态——**图的边本身就是完整可重放的记录**。
 
-`Tensor.inputs` 已存了父节点，`Op.args` 为什么还要再存一份实参？两者角色不同。`inputs` 是**图的边**：反向引擎沿它做 DFS 回溯，元素是 Tensor。`args` 是**那次调用的实参快照**：元素是底层数组，与 `fn` 配对成一份可完整重放的计算记录——反向时 `mx.vjp(fn, args, cotan)` 需要的正是与前向调用完全一致的实参序列。这让 `Op` 自包含：单算子的局部反传不需要知道 Tensor 层的存在，多输出算子共享同一个 `Op` 时，"这次调用用了什么"也只记录一份。需要说明：这是一次设计取舍，不是必要准则——`args` 技术上可以从 `inputs` 派生。选择快照存储，是因为框架以研究与教学为目标，代码可读性与数学概念的同构映射，优先于性能与内存的极致。
+`outputs` 只为回答一个问题：**多输出算子反向补零时，每个输出长什么样**。`split` 这类算子的多个输出共享同一个 `Op`、以 `index` 区分；反向传到其中一个输出时，其余输出的余切须补零——补零需要各输出的形状。而图上没有从 `Op` 找回输出 Tensor 的通路（Tensor 的引用只指上游），兄弟之间互不可见，形状参照因此必须随 `Op` 存放。元素是占位数组而非 shape 元组：建图时只确定元数据（第 5 章），占位与真值的形状恒等，且与 `zeros_like` 的参数类型一致。单输出算子用空元组作哨兵——`t._array` 自己就是形状参照。
 
-我们称 `Op` 为**影子类型**：实现层存在、用户不可达——它不在公开 API 中，与判据"**需要它实现 ≠ 公开它**"名实相符。用户构造、读取、扩展算子时面对的都是函数（`lift` 的入口与出口都是函数），而非 Op 对象；公开的构造入口只有小写工厂 `tensor()`，它固化产出为叶子——建边只有 `lift` 一条路。公开类型宇宙因此只有一个类（`Tensor`，作为类型用于标注与判别）加三个类型构造（`PyTree`、两个 Callable 形态），第 7 章在类型层回到这个划分。
+`Op` 不在公开 API 中——用户构造、读取、扩展算子时面对的都是函数（`lift` 的入口与出口都是函数）；公开的构造入口只有小写工厂 `tensor()`，它固化产出为叶子——建边只有 `lift` 一条路。公开类型宇宙因此只有一个类（`Tensor`，作为类型用于标注与判别）加四个类型构造（`PyTree` 与三个 Callable 形态，第 7 章在类型层回到这个划分）。
 
 值中心的关键收益是**可内省性**：任何一个中间 Tensor，你都能直接问它的形状（第 1 章的 $\bar v$ 是向量——`shape`/`dtype` 让余切的构造类型正确）、它的父节点、它的算子。教学框架尤其需要这一点——图不是黑盒。
 
@@ -194,7 +194,7 @@ $$
 5 & \quad t \leftarrow t_i & \\
 6 & \quad \mathbf{if}\; t_{\mathrm{op}} = \varnothing \;\vee\; t \notin \operatorname{dom}(C) \;\mathbf{then\; continue} & \\
 7 & \quad c \leftarrow (0, \ldots, 0,\, C(t),\, 0, \ldots, 0) & \textcolor{#8a8f98}{//\; \text{兄弟输出补零}} \\
-8 & \quad (g_p)_{p \in t_{\mathrm{in}}} \leftarrow \mathrm{VJP}_{t_{\mathrm{op}}}(t_{\mathrm{args}},\, c) & \\
+8 & \quad (g_p)_{p \in t_{\mathrm{in}}} \leftarrow \mathrm{VJP}_{t_{\mathrm{op}}}(\mathrm{val}(t_{\mathrm{in}}),\, c) & \\
 9 & \quad \mathbf{for}\; p \in t_{\mathrm{in}} \;\mathbf{do} & \\
 10 & \quad\quad \mathbf{if}\; p \in R \;\mathbf{then}\; C(p) \leftarrow C(p) + g_p & \textcolor{#8a8f98}{//\; \text{全路径求和}} \\
 11 & \mathbf{return}\; \{\, t \mapsto C(t) : t \in L \,\}
@@ -212,7 +212,7 @@ $$
 - "图"这个术语在 tinyautograd 里只是**视图**：从任何 Tensor 出发往上游走，看到的是以它为根的子图。两个不相干的 Tensor 各自为根，互不可见。
 
 ::: {.callout-tip title="为什么这让 MLX 成为合适的底座"}
-MLX 的 `mx.array` 本身就是"C++ 层的值中心表示"——惰性、带 primitive、求值后自动与图断开（第 5、6 章）。tinyautograd 在其上再立一层**显式的、Python 可见的**图，等于把 MLX 隐藏在 C++ 里的机制翻译成教学语言：`Tensor._array` 之下是 MLX 的惰性求值，`Tensor.op/inputs` 之上是本书要讲的全部内容。
+MLX 的 `mx.array` 本身就是"C++ 层的值中心表示"——惰性、带 primitive、求值后自动与图断开（第 5、6 章）。tinyautograd 在其上再立一层**显式的、Python 可见的**图：`Tensor._array` 之下是 MLX 的单步算子服务（shape 推导与 kernel 执行），`Tensor.op/inputs` 之上是图的全部结构与调度——第 5 章交代这条边界的精确划分。
 :::
 
 ::: {.callout-important title="本章要点"}

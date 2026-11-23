@@ -58,69 +58,11 @@ $$
 机器学习的参数通常高维（$n$ 大），部分积矩阵太重，所以选择反向；代价是缓存激活——哪些前向值必须活到反向，就是这张表的推论。
 
 下图并置两种策略：上排沿前向方向连乘部分积，下排反向流水线逐拍回传。
-<div class="jc-fig" aria-hidden="true">
+
+<iframe class="jc-fig" src="resources/jacobian-chain.html" title="Jacobian 连乘 (上) 与反向流水线 (下) 对比" loading="lazy" scrolling="no"></iframe>
 <style>
-.jc-fig { margin: 1.6em 0; }
-.jc-fig svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+.jc-fig { width: 100%; max-width: 680px; height: 375px; border: 0; display: block; margin: 1.6em auto; }
 </style>
-<svg id="jc" viewBox="0 0 640 350" width="640" height="350"></svg>
-<script>
-window.addEventListener('load', function () {
-  if (typeof Sketch === 'undefined') return;
-/* ---- 3. Jacobian 链: 上排物化代价; 下排四行递推等式 ---- */
-(function () {
-  const s = Sketch(document.getElementById('jc'));
-  const P = s.PALETTE;
-  function mat(x, y, w, h, stroke) {
-    s.path(`M${x} ${y} L ${x + w} ${y} L ${x + w} ${y + h} L ${x} ${y + h} Z`, { stroke, width: 1.5 });
-    s.path(`M${x - 4} ${y} L ${x - 4} ${y + h}`, { stroke, width: 1.3, rough: false });
-    s.path(`M${x + w + 4} ${y} L ${x + w + 4} ${y + h}`, { stroke, width: 1.3, rough: false });
-  }
-  function colvec(x, ytop, color, strong) {
-    for (let i = 0; i < 3; i++)
-      s.path(`M${x} ${ytop + i * 11} L ${x + 10} ${ytop + i * 11} L ${x + 10} ${ytop + i * 11 + 8} L ${x} ${ytop + i * 11 + 8} Z`,
-             { stroke: strong ? color : 'rgba(58,74,168,.5)', width: 1.2, fill: strong ? color : 'none', rough: false });
-  }
-  /* 上排: J₁J₂J₃J₄ 逐项相乘, 物化大矩阵, 答案只是一列 */
-  const xs = [70, 160, 250, 340], w0 = 34, hs = [40, 64, 64, 44], Y1 = 76;
-  hs.forEach((h, i) => {
-    mat(xs[i], Y1 - h / 2, w0, h, 'rgba(58,74,168,.7)');
-    s.label(xs[i] + w0 / 2, Y1 + h / 2 + 16, 'J' + (i + 1), { mono: true, size: 11, color: '#2c3a8c' });
-    if (i < 3) s.label(xs[i] + w0 + 28, Y1 + 5, '·', { mono: true, size: 16, color: '#9aa1b9' });
-  });
-  s.path('M446 26 L548 26 L548 128 L446 128 Z', { stroke: 'rgba(191,135,0,.5)', width: 1.4, fill: 'rgba(191,135,0,.06)' });
-  s.label(497, 66, 'dᵢ×dⱼ', { mono: true, size: 11, color: '#bf8700' });
-  s.path('M548 77 L 584 77', { stroke: 'rgba(191,135,0,.6)', width: 1.4, arrow: true });
-  colvec(594, Y1 - 16, '#bf8700', true);
-  s.label(599, Y1 + 30, '∇ₓL', { mono: true, size: 12, weight: 600, color: '#bf8700' });
-  s.label(320, 150, 'O( Σ dᵢ·dᵢ₊₁·dᵢ₊₂ )', { mono: true, size: 10.5, color: '#bf8700' });
-  /* 下排: 反向流水线  x̄ᵢ [Jᵀᵢ]→ x̄ᵢ₋₁ [Jᵀᵢ₋₁]→ …  每个向量只画一次 */
-  const Y2 = 250;
-  const seq = [
-    [70,  'x̄₄', true], [88, null], [192, 'x̄₃', false], [210, null],
-    [314, 'x̄₂', false], [332, null], [436, 'x̄₁', false], [454, null],
-    [558, 'x̄₀ = ∇ₓL', true],
-  ];
-  const matX = [88, 210, 332, 454]; matMeta = [['Jᵀ₄', 'x₃'], ['Jᵀ₃', 'x₂'], ['Jᵀ₂', 'x₁'], ['Jᵀ₁', 'x₀']];
-  matX.forEach((mx, i) => {
-    mat(mx, Y2 - hs[3 - i] / 2, 34, hs[3 - i], 'rgba(58,74,168,.7)');
-    s.label(mx + 17, Y2 + hs[3 - i] / 2 + 15, matMeta[i][0] + ' (' + matMeta[i][1] + ')', { mono: true, size: 10, color: '#2c3a8c' });
-  });
-  seq.forEach(([x, name, hot]) => {
-    if (!name) return;
-    colvec(x, Y2 - 16, P.green, hot);
-    s.label(x + 5, Y2 + 26, name, { mono: true, size: 11, weight: hot ? 600 : 400, color: P.green });
-  });
-  matX.forEach((mx, i) => {                       /* 产出箭头: 块左缘 -> 下一个向量 */
-    const out = [192, 314, 436, 558][i];
-    s.path(`M${mx + 38} ${Y2} L ${out - 5} ${Y2}`, { stroke: P.green, width: 1.5, arrow: true, rough: false });
-  });
-  s.pulse('M70 ' + Y2 + ' L 568 ' + Y2, { t0: 0.5, travel: 4.2, period: 9, color: P.green, size: 4 });
-  s.label(320, 320, 'x̄ᵢ₋₁ = Jᵀᵢ(xᵢ₋₁) · x̄ᵢ    i = k…1        O( Σ dᵢ·dᵢ₊₁ )', { mono: true, size: 10.5, color: P.green });
-})();
-});
-</script>
-</div>
 
 ## VJP 的运算形式
 

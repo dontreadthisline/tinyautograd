@@ -28,7 +28,7 @@ if (!arr.is_tracer()) {
 
 ## 图随引用存活
 
-tinyautograd 的 `eval()` 只物化 `_array`，`t.op`/`t.inputs` 原样保留——实验验证：
+tinyautograd 的 `eval()` 只替换 `_array`（占位换真值），`t.op`/`t.inputs` 原样保留——实验验证：
 
 ```python
 t = Tensor([1.0]) + Tensor([2.0])
@@ -40,9 +40,9 @@ assert t.op is not None and t.inputs   # 图原封不动
 
 理论上存在对齐 MLX 的路线：在 `eval()` 里加断链（`t.op, t.inputs = None, ()`），`no_grad` 随之退休。但这会继承 MLX 的 sharp edge——**用户在目标函数内部手动 `eval` 中间值 = 图提前截断 = 梯度静默算错**。tinyautograd 选择了更钝但更教学友好的形态：图长寿（可随时内省、可对已有输出反传 `vjp`），代价由 `no_grad` 显式管理。错误的形态从"静默算错"（不可见）变成"占内存"（可见）——教学框架宁要可见的浪费。
 
-## detach 是语义孔
+## detach 的语义无法推断
 
-第 4 章已定位 `detach` 是语义孔，本章补足它与 `no_grad` 的正交性：
+第 4 章已定位 `detach` 表达的是不可推断的语义意图，本章补足它与 `no_grad` 的正交性：
 
 - `no_grad` 作用于**之后**的算子调用（不建边）——**作用域**语义，影响图的构成。
 - `detach(t)` 作用于**这个**值（同值无父的新 Tensor）——**子表达式**语义，改写导数定义。
