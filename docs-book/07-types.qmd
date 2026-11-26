@@ -21,7 +21,7 @@ type PyTree[T] = T | list[PyTree[T]] | tuple[PyTree[T], ...] | dict[str, PyTree[
 
 ```python
 def value_and_grad[**P](
-    fun: Callable[P, Tensor], argnums: int | tuple[int, ...] = 0,
+    fun: Callable[P, Tensor], argnums: int | Sequence[int] = 0, argnames: str | Sequence[str] | None = None,
 ) -> Callable[P, tuple[Tensor, Any]]: ...
 ```
 

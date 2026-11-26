@@ -3,19 +3,19 @@
 与 runtime (前向引擎 + 门) 对等; 详见各模块 docstring。
 """
 
-from __future__ import annotations
-
+from collections.abc import Sequence
 from typing import Any, Callable
 
-from tinyautograd.ops import (
-    mx_add,
-    mx_ones_like,
+from tinyautograd.pytree import PyTree, flatten, substitute
+from tinyautograd.runtime import eval
+from tinyautograd.tensor import (
+    Array,
+    ArrayFn,
+    MultiArrayFn,
+    Tensor,
     mx_vjp,
     mx_zeros_like,
 )
-from tinyautograd.pytree import PyTree, flatten, substitute
-from tinyautograd.runtime import eval
-from tinyautograd.tensor import Array, ArrayFn, MultiArrayFn, Tensor
 
 __all__ = ["vjp", "value_and_grad", "grad"]
 
@@ -72,7 +72,7 @@ def _backward(
         )
     leaf_ids = {id(t) for t in leaves}
     if any(not t._computed for t in out_leaves):
-        eval(*out_leaves)  # VJP 在前向点取值: 反向需要前向值, 隐式前向
+        eval(*out_leaves)
     order, reach = _topo_pruned(out_leaves, leaf_ids)
     cotans_map: dict[int, Array] = {
         id(t): cotan for t, cotan in zip(out_leaves, init_cotans)
@@ -89,7 +89,7 @@ def _backward(
         for p, g in zip(t.inputs, vjps):
             if id(p) in reach:
                 prev = cotans_map.get(id(p))
-                cotan = g if prev is None else mx_add(g, prev)
+                cotan = g if prev is None else g + prev
                 cotans_map[id(p)] = cotan
 
     return {idx: cotans_map[idx] for idx in leaf_ids if idx in cotans_map}
@@ -99,18 +99,15 @@ def vjp(
     fun: Callable[..., Tensor | PyTree[Tensor]],
     primals: Tensor | PyTree[Tensor],
     cotangents: Tensor | PyTree[Tensor],
+    **kwargs: Any,
 ) -> tuple[Tensor | PyTree[Tensor], PyTree[Tensor]]:
-    """vector-Jacobian product (原子层)。
-
-    primals 作为 fun 的位置参数传入 (单个或元组), 全部 Tensor 叶均为求导目标;
-    cotangents 与 fun 输出同构。返回 (输出, 与 primals 同构的梯度树)。
-    """
-    args = tuple(primals) if isinstance(primals, (list, tuple)) else (primals,)
+    """vector-Jacobian product (原子层, 求值语义: 带点带方向, 一次性)。"""
+    args = primals if isinstance(primals, (list, tuple)) else (primals,)
     leaves = flatten(args)
     if not leaves:
-        raise ValueError("[vjp] primals 中没有 Tensor。")
+        raise ValueError("[vjp] 目标参数中没有 Tensor")
     cotan_leaves = [t._array for t in flatten([cotangents])]
-    out = fun(*args)
+    out = fun(*args, **kwargs)
     grads = _backward(out, cotan_leaves, leaves)
     grad_tree = substitute(args, {i: Tensor(g) for i, g in grads.items()})
     if isinstance(primals, Tensor):
@@ -120,36 +117,51 @@ def vjp(
 
 def value_and_grad[**P](
     fun: Callable[P, Tensor],
-    argnums: int | tuple[int, ...] = 0,
+    argnums: int | Sequence[int] = 0,
+    argnames: str | Sequence[str] | None = None,
 ) -> Callable[P, tuple[Tensor, Any]]:
     """把 fun 提升为返回 (值, 梯度树) 的函数。fun 须返回标量 Tensor。
-    currying 约定: 被求导参数 (默认第 0 位) 应为 Tensor 或 Tensor 树。
+
+    目标经 vjp 的 argnums 贯穿到剪枝种子。
     """
 
     def wrapped(*args: P.args, **kwargs: P.kwargs) -> tuple[Tensor, Any]:
         nums = (argnums,) if isinstance(argnums, int) else tuple(argnums)
-        targets = flatten([args[i] for i in nums])
-        if not targets:
-            raise ValueError("[value_and_grad] argnums 未选中任何 Tensor 参数。")
+        names = (
+            ()
+            if argnames is None
+            else (argnames,)
+            if isinstance(argnames, str)
+            else tuple(argnames)
+        )
+        args1 = [arg for i in nums for arg in flatten(args[i])]
+        args2 = [
+            arg for name in names if name in kwargs for arg in flatten(kwargs[name])
+        ]
         out = fun(*args, **kwargs)
         if not isinstance(out, Tensor) or out.size != 1:
-            shape = getattr(out, "shape", type(out).__name__)
-            raise ValueError(f"[value_and_grad] fun 须返回标量 Tensor, 得到: {shape}")
-        grads = _backward(out, [mx_ones_like(out._array)], targets)
-        mapping = {i: Tensor(g) for i, g in grads.items()}
-        trees = tuple(substitute(args[n], mapping) for n in nums)
-        grad_tree = trees[0] if len(trees) == 1 else trees
-        return out, grad_tree
+            raise ValueError("输出是非标量Tensor")
+        grads = _backward(
+            out,
+            [Tensor(1.0)._array],
+            args1 + args2,
+        )
+        mapping = {i: Tensor(grad) for i, grad in grads.items()}
+        grads = tuple(substitute(args[i], mapping) for i in nums) + tuple(
+            substitute(kwargs[name], mapping) for name in names
+        )
+        return out, grads[0] if len(grads) == 1 else grads
 
     return wrapped
 
 
 def grad[**P](
     fun: Callable[P, Tensor],
-    argnums: int | tuple[int, ...] = 0,
+    argnums: int | Sequence[int] = 0,
+    argnames: str | Sequence[str] | None = None,
 ) -> Callable[P, Any]:
     """value_and_grad 的丢值版。"""
-    vg = value_and_grad(fun, argnums)
+    vg = value_and_grad(fun, argnums, argnames)
 
     def wrapped(*args: P.args, **kwargs: P.kwargs) -> Any:
         return vg(*args, **kwargs)[1]

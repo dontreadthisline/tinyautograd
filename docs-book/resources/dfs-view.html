@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>前向与反向的 DFS 视图</title>
+<link rel="stylesheet" href="libs/katex/katex.min.css">
+<script src="libs/katex/katex.min.js"></script>
+<script src="js/sketch.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  .tx { display: inline-block; line-height: 1.1; white-space: nowrap; width: max-content; }
+  .bar { display: flex; gap: .5em; margin-bottom: .6em; justify-content: center; }
+  .bar button { font: 500 .85em -apple-system,"PingFang SC",sans-serif; padding: .32em 1em;
+    border: 1px solid #ddd8ce; border-radius: 6px; background: #fff; color: #24292f; cursor: pointer; }
+  .bar button:hover { border-color: #0969da; color: #0969da; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <button onclick="dvForward()">前向 DFS (全部祖先)</button>
+  <button onclick="dvBackward()">反向 DFS (目标可达剪枝)</button>
+  <button onclick="dvReset()">复位</button>
+</div>
+<svg id="dv" viewBox="0 0 640 354" width="640" height="354" xmlns="http://www.w3.org/2000/svg"></svg>
+<script>
+window.addEventListener('load', function () {
+  if (typeof Sketch === 'undefined') return;
+  const svg = document.getElementById('dv');
+  const s = Sketch(svg);
+  const P = s.PALETTE;
+  const NS = 'http://www.w3.org/2000/svg';
+
+  const labels = [];
+  function tex(x, y, latex, { color = '#2c3a8c', fs = 12.5, anchor = 'middle', weight = 500, cls = '' } = {}) {
+    const fo = document.createElementNS(NS, 'foreignObject');
+    if (cls) fo.setAttribute('class', cls);
+    const div = document.createElement('div');
+    div.className = 'tx';
+    div.style.cssText = `color:${color};font-size:${fs}px;font-weight:${weight}`;
+    katex.render(latex, div, { throwOnError: false });
+    fo.appendChild(div); svg.appendChild(fo);
+    const item = { fo, div, x, y, anchor };
+    labels.push(item); place(item);
+    return item;
+  }
+  function place({ fo, div, x, y, anchor }) {
+    const w = div.getBoundingClientRect().width, h = div.getBoundingClientRect().height;
+    fo.setAttribute('width', Math.ceil(w) + 2); fo.setAttribute('height', Math.ceil(h) + 2);
+    fo.setAttribute('x', anchor === 'middle' ? x - (w + 2) / 2 : x);
+    fo.setAttribute('y', y - h / 2);
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => labels.forEach(place));
+
+  /* 图: out = p + g(y),  p = a·b,  a = x+1,  b = 2x   —— x 汇聚, g 支路无关 */
+  const pos = { x: [70, 250], a: [215, 160], b: [215, 318], p: [360, 239], y: [215, 62], g: [390, 62], out: [520, 150] };
+  const RL = 15, R = 21;
+  const EDGES = [['x','a'],['x','b'],['a','p'],['b','p'],['p','out'],['y','g'],['g','out']];
+  const edges = {};
+  EDGES.forEach(([a, b]) => {
+    const [ax, ay] = pos[a], [bx, by] = pos[b];
+    const ra = a === 'x' || a === 'y' ? RL : R, rb = b === 'y' ? RL : R;
+    const mx = (ax + bx) / 2;
+    const d = by < ay
+      ? `M${ax} ${ay - ra} C ${ax} ${ay - 46}, ${bx} ${by + 46}, ${bx} ${by + rb}`
+      : `M${ax + ra} ${ay} C ${mx} ${ay}, ${mx} ${by}, ${bx - rb} ${by}`;
+    edges[a + '-' + b] = s.path(d, { stroke: 'rgba(58,74,168,.35)', width: 1.4, arrow: true });
+  });
+  const OPS = { a: 'add', b: 'mul', p: 'mul', g: 'g', out: 'add' };
+  const META = { a: 'x+1', b: '2x', p: 'a \\cdot b', g: 'g(y)', out: 'p + g' };
+  const nodes = {};
+  Object.keys(pos).forEach(id => {
+    const [x, yy] = pos[id];
+    const leaf = id === 'x' || id === 'y';
+    nodes[id] = s.node(x, yy, { r: leaf ? RL : R, fill: leaf ? '#dfe7fb' : '#fff' });
+    s.label(x, yy + 4, id, { mono: true, size: 11, weight: 600, color: '#3a4aa8' });
+    if (!leaf) {
+      s.label(x, yy + 17, OPS[id], { mono: true, size: 8.5, color: '#8a8f9c' });
+      tex(x, yy - R - 10, META[id], { fs: 10.5, color: '#6b7280' });
+    }
+  });
+  const AMBER = '#bf8700', GREEN = '#1a7f37', INK = '#3a4aa8';
+  const PRUNED = ['g', 'y'];
+  let timers = [];
+  const clr = () => { timers.forEach(clearTimeout); timers = []; };
+  function base() {
+    Object.values(nodes).forEach((n, i) => {
+      const id = Object.keys(nodes)[i];
+      n.setAttribute('stroke', INK); n.setAttribute('stroke-width', 1.6);
+      n.setAttribute('fill', (id === 'x' || id === 'y') ? '#dfe7fb' : '#fff');
+    });
+    Object.values(edges).forEach(e => { e.setAttribute('stroke', 'rgba(58,74,168,.35)'); e.setAttribute('stroke-width', 1.4); e.setAttribute('opacity', 1); });
+    document.querySelectorAll('#dv .dv-mark').forEach(g => g.remove());
+  }
+  window.dvReset = base;
+
+  /* 前向 _topo_all: 从 out 后序 DFS, 全部祖先入序 (g 支路也在 —— 值依赖) */
+  const fwdSeq = ['x', 'a', 'b', 'p', 'y', 'g', 'out'];
+  window.dvForward = function () {
+    base();
+    fwdSeq.forEach((id, i) => timers.push(setTimeout(function () {
+      nodes[id].setAttribute('stroke', AMBER); nodes[id].setAttribute('stroke-width', 2.6);
+      EDGES.forEach(([a, b]) => { if (b === id) { const e = edges[a + '-' + b]; e.setAttribute('stroke', AMBER); e.setAttribute('stroke-width', 2.2); } });
+      const [x, yy] = pos[id];
+      tex(x + 20, yy - 20, String(i + 1), { color: AMBER, fs: 11, weight: 600, cls: 'dv-mark' });
+    }, i * 260)));
+  };
+
+  /* 反向 _topo_pruned (目标 = {x}): r 传播, g 支路不可达目标被剪 */
+  const backSeq = ['out', 'p', 'b', 'a', 'x'];
+  window.dvBackward = function () {
+    base();
+    /* 剪枝: g 支路灰化 */
+    PRUNED.forEach(id => {
+      nodes[id].setAttribute('stroke', '#c9cbd6'); nodes[id].setAttribute('stroke-width', 1.2);
+      nodes[id].setAttribute('fill', '#f3f4f6');
+    });
+    ['y-g', 'g-out'].forEach(k => { edges[k].setAttribute('stroke', '#d8dbe2'); edges[k].setAttribute('stroke-dasharray', '4 4'); });
+    backSeq.forEach((id, i) => timers.push(setTimeout(function () {
+      nodes[id].setAttribute('stroke', GREEN); nodes[id].setAttribute('stroke-width', 2.5);
+      EDGES.forEach(([a, b]) => { if (a === id && !PRUNED.includes(b)) { const e = edges[a + '-' + b]; e.setAttribute('stroke', GREEN); e.setAttribute('stroke-width', 2.2); } });
+      const [x, yy] = pos[id];
+      tex(x - 20, yy - 20, String(i + 1), { color: GREEN, fs: 11, weight: 600, cls: 'dv-mark' });
+      if (id === 'x') {
+        nodes[id].setAttribute('fill', 'rgba(26,127,55,.14)');
+        tex(x, yy + 36, '\\nabla_x', { color: GREEN, fs: 12.5, weight: 600, cls: 'dv-mark' });
+      }
+    }, i * 260)));
+  };
+  base();
+});
+</script>
+</body>
+</html>

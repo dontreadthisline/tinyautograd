@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>两层 MLP 的计算图</title>
+<link rel="stylesheet" href="libs/katex/katex.min.css">
+<script src="libs/katex/katex.min.js"></script>
+<script src="js/sketch.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  .tx { display: inline-block; line-height: 1.1; white-space: nowrap; width: max-content; }
+  .bar { display: flex; gap: .5em; margin-bottom: .6em; justify-content: center; }
+  .bar button { font: 500 .85em -apple-system,"PingFang SC",sans-serif; padding: .32em 1em;
+    border: 1px solid #ddd8ce; border-radius: 6px; background: #fff; color: #24292f; cursor: pointer; }
+  .bar button:hover { border-color: #0969da; color: #0969da; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <button onclick="cgForward()">前向 (建图)</button>
+  <button onclick="cgBackward()">反向 (余切回流)</button>
+  <button onclick="cgReset()">复位</button>
+</div>
+<svg id="cgsvg" viewBox="0 0 880 180" width="880" height="180" xmlns="http://www.w3.org/2000/svg"></svg>
+<script>
+window.addEventListener('load', function () {
+  if (typeof Sketch === 'undefined') return;
+  const svg = document.getElementById('cgsvg');
+  const s = Sketch(svg);
+  const NS = 'http://www.w3.org/2000/svg';
+
+  /* KaTeX 标注: foreignObject 渲染, 测量定位 (字体就绪后校准) */
+  const labels = [];
+  function tex(x, y, latex, { color = '#2c3a8c', fs = 12, anchor = 'middle', weight = 500 } = {}) {
+    const fo = document.createElementNS(NS, 'foreignObject');
+    const div = document.createElement('div');
+    div.className = 'tx';
+    div.style.cssText = `color:${color};font-size:${fs}px;font-weight:${weight}`;
+    katex.render(latex, div, { throwOnError: false });
+    fo.appendChild(div); svg.appendChild(fo);
+    labels.push({ fo, div, x, y, anchor }); place({ fo, div, x, y, anchor });
+  }
+  function place({ fo, div, x, y, anchor }) {
+    const w = div.getBoundingClientRect().width, h = div.getBoundingClientRect().height;
+    fo.setAttribute('width', Math.ceil(w) + 2); fo.setAttribute('height', Math.ceil(h) + 2);
+    fo.setAttribute('x', anchor === 'middle' ? x - (w + 2) / 2 : x);
+    fo.setAttribute('y', y - h / 2);
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => labels.forEach(place));
+
+  const Y1 = 52, Y2 = 152, R = 22, RL = 15;
+  const pos = { x: [26, Y1], mm1: [140, Y1], z1: [254, Y1], h: [368, Y1],
+                mm2: [482, Y1], o: [596, Y1], sm: [698, Y1], L: [800, Y1],
+                W1: [140, Y2], b1: [254, Y2], W2: [482, Y2], b2: [596, Y2], y: [800, Y2] };
+  const isLeaf = id => ['x','W1','b1','W2','b2','y'].includes(id);
+  const EDGES = [['x','mm1'],['W1','mm1'],['mm1','z1'],['b1','z1'],['z1','h'],['h','mm2'],
+                 ['W2','mm2'],['mm2','o'],['b2','o'],['o','sm'],['sm','L'],['y','L']];
+  const edges = {};
+  EDGES.forEach(([a, b]) => {
+    const [ax, ay] = pos[a], [bx, by] = pos[b];
+    const ra = isLeaf(a) ? RL : R, rb = isLeaf(b) ? R : RL;
+    let d;
+    if (by > ay) { d = `M${ax + ra} ${ay} C ${ax + 44} ${ay}, ${bx - 44} ${by}, ${bx} ${by - rb}`; }
+    else { d = `M${ax} ${ay + ra} C ${ax + 5} ${ay + 40}, ${bx - 5} ${by - 40}, ${bx} ${by - rb}`; }
+    edges[a + '-' + b] = s.path(d, { stroke: 'rgba(58,74,168,.35)', width: 1.4, arrow: true });
+  });
+  /* 算子名保持代码词汇 (mono); 输入/公式元数据走 KaTeX */
+  const OPS = { mm1: 'matmul', z1: 'add', h: 'relu', mm2: 'matmul', o: 'add', sm: 'softmax', L: 'CE' };
+  const META = { mm1: 'x W_1', z1: '{+\\,b_1}', h: '\\max(z_1,\\,0)', mm2: 'h W_2',
+                 o: '{+\\,b_2}', sm: 'p', L: '-\\langle y,\\, \\log p \\rangle' };
+  const nodes = {};
+  Object.keys(pos).forEach(id => {
+    const [x, yy] = pos[id];
+    if (isLeaf(id)) {
+      nodes[id] = s.node(x, yy, { r: RL, fill: id === 'y' ? '#c9cbd6' : '#dfe7fb' });
+      s.label(x, yy + 4, id, { mono: true, size: 10.5, weight: 600, color: id === 'y' ? '#8a8f9c' : '#3a4aa8' });
+    } else {
+      nodes[id] = s.node(x, yy, { r: R });
+      s.label(x, yy + 5, OPS[id], { mono: true, size: 11, weight: 600, color: '#2c3a8c' });
+      tex(x, yy - R - 9, META[id], { fs: 9.5, color: '#6b7280' });
+    }
+  });
+  /* 动效: 前向琥珀游走 / 反向绿色回流 + 梯度标记 (∇ 走 KaTeX) */
+  const fwdOrder = ['x','W1','b1','W2','b2','y','mm1','z1','h','mm2','o','sm','L'];
+  const backNodes = ['L','sm','o','b2','mm2','W2','h','z1','b1','mm1','W1','x'];
+  const backEdges = [['L','sm'],['sm','o'],['o','b2'],['o','mm2'],['mm2','W2'],['mm2','h'],['h','z1'],
+                     ['z1','b1'],['z1','mm1'],['mm1','W1'],['mm1','x']];
+  const GRAD = ['W1','b1','W2','b2','x'];
+  const AMBER = '#bf8700', GREEN = '#1a7f37', INK = '#3a4aa8';
+  const leafFill = id => id === 'y' ? '#c9cbd6' : '#dfe7fb';
+  let timers = [];
+  const clr = () => { timers.forEach(clearTimeout); timers = []; };
+  function base(n, id) { n.setAttribute('stroke', INK); n.setAttribute('stroke-width', 1.6); n.setAttribute('fill', isLeaf(id) ? leafFill(id) : '#fff'); }
+  window.cgReset = function () {
+    clr();
+    Object.entries(nodes).forEach(([id, n]) => base(n, id));
+    Object.values(edges).forEach(e => { e.setAttribute('stroke', 'rgba(58,74,168,.35)'); e.setAttribute('stroke-width', 1.4); });
+    document.querySelectorAll('#cgsvg .cg-grad').forEach(g => g.remove());
+    labels.forEach(l => { l.div.style.opacity = 1; l.div.style.color = l.baseColor; });
+  };
+  window.cgForward = function () {
+    cgReset();
+    fwdOrder.forEach((id, i) => timers.push(setTimeout(function () {
+      const n = nodes[id]; n.setAttribute('stroke', AMBER); n.setAttribute('stroke-width', 2.6);
+      EDGES.forEach(([a, b]) => { if (b === id) { const e = edges[a + '-' + b]; e.setAttribute('stroke', AMBER); e.setAttribute('stroke-width', 2.2); } });
+    }, i * 230)));
+  };
+  window.cgBackward = function () {
+    cgReset();
+    backNodes.forEach((id, i) => timers.push(setTimeout(function () {
+      const n = nodes[id]; n.setAttribute('stroke', GREEN); n.setAttribute('stroke-width', 2.4);
+      if (GRAD.includes(id)) n.setAttribute('fill', 'rgba(26,127,55,.14)');
+      backEdges.forEach(([a, b]) => { if (a === id) { const e = edges[b + '-' + a] || edges[a + '-' + b]; if (e) { e.setAttribute('stroke', GREEN); e.setAttribute('stroke-width', 2.2); } } });
+      if (GRAD.includes(id)) {
+        const x = parseFloat(nodes[id].getAttribute('cx'));
+        const g = document.createElementNS(NS, 'g'); g.setAttribute('class', 'cg-grad');
+        svg.appendChild(g);
+        const fo = document.createElementNS(NS, 'foreignObject');
+        const div = document.createElement('div');
+        div.className = 'tx';
+        div.style.cssText = 'color:#1a7f37;font-size:11.5px;font-weight:600';
+        katex.render('\\nabla_' + (id === 'x' ? 'x' : id), div, { throwOnError: false });
+        fo.appendChild(div); g.appendChild(fo);
+        const w = div.getBoundingClientRect().width, h = div.getBoundingClientRect().height;
+        fo.setAttribute('width', Math.ceil(w) + 2); fo.setAttribute('height', Math.ceil(h) + 2);
+        fo.setAttribute('x', x - (w + 2) / 2); fo.setAttribute('y', Y2 - 48);
+      }
+    }, i * 230)));
+  };
+  labels.forEach(l => l.baseColor = l.div.style.color);
+  cgReset();
+});
+</script>
+</body>
+</html>

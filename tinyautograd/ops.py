@@ -1,23 +1,21 @@
 """ops: 全部算子的门面 (静态定义, 绑定 mlx)。后端接触面收敛于此 (与 tensor),
 数组层机制桥 (mx_*) 供变换层使用, 不进用户面。"""
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from functools import reduce
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable
 
 import mlx.core as mx
 
-if TYPE_CHECKING:
-    from tinyautograd.tensor import (
-        Array,
-        ArrayFn,
-        MultiArrayFn,
-        Tensor,
-        TensorFn,
-        TensorLike,
-    )
+from tinyautograd import tensor
+from tinyautograd.tensor import (
+    Array,
+    ArrayFn,
+    MultiArrayFn,
+    Tensor,
+    TensorFn,
+    TensorLike,
+)
 
 __all__ = [
     # 提升门 (扩展点)
@@ -63,8 +61,6 @@ __all__ = [
     "relu",
 ]
 
-_no_grad = False
-
 
 def lift(fn: ArrayFn) -> TensorFn:
     """把 mlx 算子提升为可导算子: 前向 = fn, 反向 = mx.vjp(fn, ...)。
@@ -73,15 +69,13 @@ def lift(fn: ArrayFn) -> TensorFn:
     """
 
     def wrapped(*args: TensorLike) -> Tensor:
-        from tinyautograd.tensor import Op, Tensor, wrap
-
-        ts = tuple(wrap(a) for a in args)
-        if _no_grad:
+        ts = tuple(tensor._wrap(a) for a in args)
+        if tensor._no_grad:
             arrays = tuple(t._ensure() for t in ts)
             return Tensor(fn(*arrays))
         node = fn(*(t._array for t in ts))
         ph = mx.zeros(node.shape, node.dtype)
-        return Tensor(ph, inputs=ts, op=Op(fn), computed=False)
+        return Tensor(ph, inputs=ts, op=tensor.Op(fn), computed=False)
 
     wrapped.__name__ = getattr(fn, "__name__", "lifted")
     return wrapped
@@ -95,15 +89,13 @@ def lift_multi(fn: MultiArrayFn) -> Callable[..., tuple[Tensor, ...]]:
     """
 
     def wrapped(*args: TensorLike) -> tuple[Tensor, ...]:
-        from tinyautograd.tensor import Op, Tensor, wrap
-
-        ts = tuple(wrap(a) for a in args)
-        if _no_grad:
+        ts = tuple(tensor._wrap(a) for a in args)
+        if tensor._no_grad:
             arrays = tuple(t._ensure() for t in ts)
             return tuple(Tensor(x) for x in fn(*arrays))
         nodes = tuple(fn(*(t._array for t in ts)))  # 临时, 借 shape
         placeholders = tuple(mx.zeros(n.shape, n.dtype) for n in nodes)
-        op = Op(fn, placeholders)  # 多输出: outputs 即占位 (形状参照)
+        op = tensor.Op(fn, placeholders)  # 多输出: outputs 即占位 (形状参照)
         return tuple(
             Tensor(ph, inputs=ts, op=op, index=i, computed=False)
             for i, ph in enumerate(placeholders)
@@ -114,16 +106,11 @@ def lift_multi(fn: MultiArrayFn) -> Callable[..., tuple[Tensor, ...]]:
 
 
 def _source(fn: ArrayFn) -> TensorFn:
-    """内部便利: 把 mx 构造函数包装为源词汇 (叶子, op=None)。
-
-    不进公开 API —— 源的扩展不需要门, 任何返回 Tensor 的函数即源。
-    """
+    """内部便利: 把 mx 构造函数包装为源词汇 (叶子, op=None)。"""
 
     def wrapped(*args: Any) -> Tensor:
         # 参数是透传给 mx 构造函数的 shape/dtype 等 (域由被包装函数定义), 不参与 wrap
-        from tinyautograd.tensor import tensor
-
-        return tensor(fn(*args))
+        return tensor.tensor(fn(*args))
 
     wrapped.__name__ = getattr(fn, "__name__", "source")
     return wrapped
@@ -132,17 +119,6 @@ def _source(fn: ArrayFn) -> TensorFn:
 def compose(*fns: Callable[..., Any]) -> Callable[..., Any]:
     """函数组合子: compose(f, g)(x) = f(g(x)), 即数学上的 f∘g。"""
     return reduce(lambda f, g: lambda *a, **k: f(g(*a, **k)), fns)
-
-
-# ---------------------------------------------------------------------------
-# 数组层机制桥: 变换层 (autograd) 的后端通路, 不建边、不进 __all__。
-# lift 的反向本就外包 mx.vjp —— 机制与词汇同地存放。
-# ---------------------------------------------------------------------------
-mx_vjp = mx.vjp
-mx_add = mx.add
-mx_zeros_like = mx.zeros_like
-mx_ones_like = mx.ones_like
-mx_eval = mx.eval
 
 
 # ---------------------------------------------------------------------------

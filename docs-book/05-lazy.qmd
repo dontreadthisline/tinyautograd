@@ -68,13 +68,70 @@ def lift(fn):
 | shape 预言 | 建图瞬间 | 各算子的输出形状规则 (纯 shape 函数) |
 | 单步计算 | 求值时刻 | 一个 `fn` + 一次物化 / 一次 `mx.vjp` |
 
-图的结构、拓扑调度、惰性语义全部归属本框架；MLX 图上从不超过一层深度。这个划分也落在模块结构上：`runtime.py` 持有前向的拓扑与调度（加上 `eval`/`no_grad`/`detach` 三个门），`autograd.py` 持有反向的拓扑与调度（目标可达性剪枝、余切接力、`vjp`/`grad` 家族）——两个引擎各自配一个单步原语，前向是"调一次 `fn` + 立即物化"，反向是"调一次 `mx_vjp`"。
+图的结构、拓扑调度、惰性语义全部归属本框架；MLX 图上从不超过一层深度。模块结构上：`runtime.py` 是**求值底座**——持有前向拓扑与调度，加上 `eval`/`no_grad`/`detach` 三个门；`autograd.py` 持有反向拓扑与调度（目标可达性剪枝、余切接力、`vjp`/`grad` 家族）。前向与反向在数学上是对偶的两个方向，工程上则是**单向依赖**——反向需要前向值（`vjp` 入口的隐式前向），表示层的值读门（`_ensure`）也依赖同一底座；`runtime` 因此只向下依赖 `tensor`（表示 + 数组机制桥 + 图构成开关）与 `pytree`（入口摊平），不与任何引擎相互引用。两台机器各自配一个单步原语：前向是"调一次 `fn` + 立即物化"，反向是"调一次 `mx_vjp`"。
 
 三个配套语义随之固定：
 
 - **`no_grad` 是 eager 的**：不建边就没有延迟的本钱（无图可依），块内算子构造即值——输入经 `_ensure()` 取真值后立即执行。这正是 PyTorch 的形态。
 - **反向需要前向值**：`vjp` 入口对未求值的输出先隐式前向——VJP 在前向点取值，本就是数学事实。
 - **重放输入永远取 `inputs` 的当前 `_array`**：Tensor 不可变（`_array` 只被求值替换为数值恒等的真值），图的边就是重放的完整记录。
+
+## 两台引擎的算法
+
+前向与反向是同一件事的两个方向：**调用算子，图生长**。前向每调用一次算子，值图长出一层；反向的每一拍 VJP 也是一次算子调用，余切的每次累加 $\oplus$ 也是一个 `add`——梯度图与值图同构地生长，通过 VJP 咬合（VJP 以前向值为实参，梯度节点挂在值节点上）。`eval(loss, grads)` 之所以是一次调用能同时结算两张图，正因为它们从来不是两次计算。
+
+两台引擎的算法对偶地写在一起（@alg-forward 与 @alg-backward）。前向：后序 DFS 收集**全部祖先**（值依赖闭包——每个影响输出的值都要算），按拓扑序逐节点重放；反向：后序 DFS 收集**可达目标的子集**（梯度依赖——与目标无关的分支整棵剪掉），按逆序逐层回传。下图用 $\mathrm{out} = (x+1)\cdot 2x + g(y)$（对 $x$ 求导，$x$ 经 $x{+}1$ 与 $2x$ 两路汇聚，$g$ 支路无关）展示同一张图上的两种遍历：
+
+<iframe class="dfs-view" src="resources/dfs-view.html" title="前向与反向的 DFS 视图: 值依赖闭包 vs 目标可达剪枝" loading="lazy" scrolling="no"></iframe>
+<style>
+.dfs-view { width: 100%; max-width: 680px; height: 420px; border: 0; display: block; margin: 1.2em auto; }
+</style>
+
+上例中 $g(y)$ 分支：前向必须访问它（$\mathrm{out}$ 的值依赖 $g$ 的值），反向剪掉它（$\nabla_x$ 与 $g$ 无关）。前向的收集不密不剪——漏一个节点值就错；反向的剪枝是纯优化——多算的分支会被可达集拦住，进不了任何目标的余切。
+
+::: {#alg-forward}
+### 前向求值
+
+输入　目标 Tensor 树 $A$。\
+副作用　占位数组被真值替换。
+
+$$
+\begin{array}{rll}
+1 & T \leftarrow \text{前向拓扑序}(\text{全部祖先}(A)) & \textcolor{#8a8f98}{//\; \text{后序 DFS, 无剪枝}} \\
+2 & \mathbf{for}\; t \in T \;\mathbf{do} & \\
+3 & \quad \mathbf{if}\; t.\mathrm{computed} \;\mathbf{then\; continue} & \textcolor{#8a8f98}{//\; \text{幂等}} \\
+4 & \quad \mathbf{if}\; t_{\mathrm{op}} = \varnothing \;\mathbf{then\; \text{物化}(t.\mathrm{array});\; \mathbf{continue}} & \textcolor{#8a8f98}{//\; \text{源}} \\
+5 & \quad a \leftarrow (p.\mathrm{array})_{p \in t_{\mathrm{in}}} & \textcolor{#8a8f98}{//\; \text{父必已求值 (拓扑序保证)}} \\
+6 & \quad o \leftarrow t_{\mathrm{op}}.\mathrm{fn}(a);\; \text{物化}(o) & \textcolor{#8a8f98}{//\; \text{单步: 新节点只依赖已具体化的父}} \\
+7 & \quad t.\mathrm{array} \leftarrow o[t.\mathrm{index}];\; t.\mathrm{computed} \leftarrow \text{true} & \textcolor{#8a8f98}{//\; \text{多输出共享重放, 按 index 取}}
+\end{array}
+$$
+:::
+
+::: {#alg-backward}
+### 余切回传
+
+输入　输出节点 $\mathrm{out}$，初始余切 $v$，求导目标集 $L \subseteq V$。\
+前提　$\mathrm{out}$ 未求值则先执行前向算法。输出　各目标的余切。
+
+$$
+\begin{array}{rll}
+1 & (t_k, \ldots, t_1) \leftarrow \text{逆拓扑序}(G) & \textcolor{#8a8f98}{//\; t_k = \mathrm{out}} \\
+2 & R \leftarrow \{\, u \in V : u \text{ 沿 } E \text{ 反向可达 } L \,\} & \textcolor{#8a8f98}{//\; \text{剪掉无关分支}} \\
+3 & C \leftarrow \{\, \mathrm{out} \mapsto v \,\} & \textcolor{#8a8f98}{//\; C : V \rightharpoonup \text{余切}} \\
+4 & \mathbf{for}\; i = k \;\mathbf{downto}\; 1 \;\mathbf{do} & \\
+5 & \quad t \leftarrow t_i & \\
+6 & \quad \mathbf{if}\; t_{\mathrm{op}} = \varnothing \;\vee\; t \notin \operatorname{dom}(C) \;\mathbf{then\; continue} & \\
+7 & \quad c \leftarrow (0, \ldots, 0,\, C(t),\, 0, \ldots, 0) & \textcolor{#8a8f98}{//\; \text{兄弟输出补零}} \\
+8 & \quad (g_p)_{p \in t_{\mathrm{in}}} \leftarrow \mathrm{VJP}_{t_{\mathrm{op}}}(\mathrm{val}(t_{\mathrm{in}}),\, c) & \\
+9 & \quad \mathbf{for}\; p \in t_{\mathrm{in}} \;\mathbf{do} & \\
+10 & \quad\quad \mathbf{if}\; p \in R \;\mathbf{then}\; C(p) \leftarrow C(p) + g_p & \textcolor{#8a8f98}{//\; \text{全路径求和}} \\
+11 & \mathbf{return}\; \{\, t \mapsto C(t) : t \in L \,\}
+\end{array}
+$$
+:::
+
+三个反向规则（补零/求和/剪枝）的图结构根源在第 2 章（汇聚/无关分支/多输出）；两个算法的对应实现是 `runtime.eval` 与 `autograd._backward`，两段代码与两份伪代码逐行同构。
 
 ## 惰性买了什么
 
@@ -106,4 +163,5 @@ def lift(fn):
 2. `item()` 是隐式出口。若把它改成惰性（返回一个特殊 Tensor），`if loss.item() < eps: break` 这类训练循环代码会发生什么？讨论出口为什么必须是**同步边界**。
 3. 构造一个 100 层的深链，对比三种方式的耗时：(a) 每层 `eval`；(b) 末端一次 `eval`；(c) `no_grad` + 末端 `eval`。解释 (a) 与 (b) 差异的来源——两者都不经过后端批调度，差异来自哪里？
 4. `_computed` 标记与 `mx.eval` 原生的幂等机制相比，多提供了什么能力？（提示：第二次 `eval` 同一棵子图，两种机制各发生什么？）
+5. 两个引擎的 DFS 都是后序收集。说明：对无环图，收集结果是拓扑序；若图有环（`Tensor` 构造时手工注入环），两段代码各会怎样？
 :::

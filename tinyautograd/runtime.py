@@ -6,18 +6,14 @@
 mlx 在此退化为无状态单步服务 (fn + mx_eval), 图与调度完全归属本框架。
 """
 
-from __future__ import annotations
-
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Generator
+from typing import Generator
 
-from tinyautograd import ops
-from tinyautograd.ops import mx_eval
+from tinyautograd import tensor
 from tinyautograd.pytree import PyTree, flatten
-from tinyautograd.tensor import Array, Tensor
+from tinyautograd.tensor import Array, Tensor, mx_eval
 
-if TYPE_CHECKING:
-    from tinyautograd.tensor import Op
+from tinyautograd.tensor import Op
 
 __all__ = ["eval", "no_grad", "detach"]
 
@@ -42,40 +38,33 @@ def _topo_all(roots: list[Tensor]) -> list[Tensor]:
 
 
 def eval(*args: PyTree[Tensor]) -> None:
-    """显式离开 DSL 算账 (显式求值门)。
-
-    前向调度由本图承担: 按拓扑序逐节点重放 op.fn 并单步求值,
-    mlx 图深度恒为 1; 占位数组被真值替换。
+    """
+    前向调度: 按拓扑序逐节点重放 op.fn 并单步求值;
+    假占位数组被真值替换, _computed 标记幂等。
     """
     order = _topo_all(flatten(args))
-    replayed: dict[int, tuple[Array, ...]] = {}  # id(op) -> 重放结果 (多输出去重)
     for t in order:
         if t._computed:
             continue
         if t.op is None:
             mx_eval(t._array)
-            t._computed = True
-            continue
-        outs = replayed.get(id(t.op))
-        if outs is None:
-            arrays = tuple(p._array for p in t.inputs)
-            ret = t.op.fn(*arrays)
-            outs = tuple(ret) if isinstance(ret, (list, tuple)) else (ret,)
+        else:
+            ret = t.op.fn(*(p._array for p in t.inputs))
+            outs = ret if isinstance(ret, (list, tuple)) else (ret,)
             mx_eval(*outs)
-            replayed[id(t.op)] = outs
-        t._array = outs[t.index]
+            t._array = outs[t.index]
         t._computed = True
 
 
 @contextmanager
 def no_grad() -> Generator[None, None, None]:
-    """上下文: 算子不建边 (纯前向 / 推理)。不建边就没有延迟的本钱 —— eager 执行。"""
-    prev = ops._no_grad
-    ops._no_grad = True
+    """上下文: 算子不建边 (纯前向 / 推理)。不建边就没有延迟 —— eager 执行。"""
+    prev = tensor._no_grad
+    tensor._no_grad = True
     try:
         yield
     finally:
-        ops._no_grad = prev
+        tensor._no_grad = prev
 
 
 def detach(t: Tensor) -> Tensor:

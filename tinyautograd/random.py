@@ -4,16 +4,11 @@
 不参与求导 —— 随机量参与前向, 梯度绕它而行。
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 import mlx.core as mx
 
 from tinyautograd.ops import _source
 
-if TYPE_CHECKING:
-    from tinyautograd.tensor import TensorFn
+from tinyautograd.tensor import TensorFn
 
 __all__ = ["seed", "normal"]
 

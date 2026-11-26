@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>汇聚: 全微分公式的路径求和</title>
+<link rel="stylesheet" href="libs/katex/katex.min.css">
+<script src="libs/katex/katex.min.js"></script>
+<script src="js/sketch.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  .tx { display: inline-block; line-height: 1.1; white-space: nowrap; width: max-content; }
+  .bar { display: flex; gap: .5em; margin-bottom: .6em; justify-content: center; }
+  .bar button { font: 500 .85em -apple-system,"PingFang SC",sans-serif; padding: .32em 1em;
+    border: 1px solid #ddd8ce; border-radius: 6px; background: #fff; color: #24292f; cursor: pointer; }
+  .bar button:hover { border-color: #0969da; color: #0969da; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <button onclick="cfForward()">前向 (建图)</button>
+  <button onclick="cfBackward()">反向 (n 路回流)</button>
+  <button onclick="cfReset()">复位</button>
+</div>
+<svg id="cf" viewBox="0 0 640 345" width="640" height="345" xmlns="http://www.w3.org/2000/svg"></svg>
+<script>
+window.addEventListener('load', function () {
+  if (typeof Sketch === 'undefined') return;
+  const svg = document.getElementById('cf');
+  const s = Sketch(svg);
+  const P = s.PALETTE;
+  const NS = 'http://www.w3.org/2000/svg';
+
+  const labels = [];
+  function tex(x, y, latex, { color = '#2c3a8c', fs = 13, anchor = 'middle', weight = 500, cls = '' } = {}) {
+    const fo = document.createElementNS(NS, 'foreignObject');
+    if (cls) fo.setAttribute('class', cls);
+    const div = document.createElement('div');
+    div.className = 'tx';
+    div.style.cssText = `color:${color};font-size:${fs}px;font-weight:${weight}`;
+    katex.render(latex, div, { throwOnError: false });
+    fo.appendChild(div); svg.appendChild(fo);
+    const item = { fo, div, x, y, anchor };
+    labels.push(item); place(item);
+  }
+  function place({ fo, div, x, y, anchor }) {
+    const w = div.getBoundingClientRect().width, h = div.getBoundingClientRect().height;
+    fo.setAttribute('width', Math.ceil(w) + 2); fo.setAttribute('height', Math.ceil(h) + 2);
+    fo.setAttribute('x', anchor === 'middle' ? x - (w + 2) / 2 : x);
+    fo.setAttribute('y', y - h / 2);
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => labels.forEach(place));
+
+  /* 图: f(g₁(x), …, gₙ(x)) —— 同一个 x 经 n 条支路进入 f */
+  const X = [80, 168], F = [505, 168], RL = 15, R = 21;
+  const G = { 1: [260, 70], 2: [260, 168], n: [260, 266] };
+  const eXG = {}, eGF = {};
+  [['1', 70], ['2', 168], ['n', 266]].forEach(([k, gy]) => {
+    eXG[k] = s.path(`M96 168 C 165 ${gy}, 200 ${gy}, 238 ${gy}`, { stroke: 'rgba(58,74,168,.35)', width: 1.4, arrow: true });
+    eGF[k] = s.path(`M282 ${gy} C 350 ${gy}, 400 168, 483 ${168}`, { stroke: 'rgba(58,74,168,.35)', width: 1.4, arrow: true });
+  });
+  const nX = s.node(X[0], X[1], { r: RL, fill: '#dfe7fb' });
+  const nF = s.node(F[0], F[1], { r: R });
+  const nG = {};
+  for (const k of ['1', '2', 'n']) nG[k] = s.node(G[k][0], G[k][1], { r: 19 });
+  s.label(X[0], X[1] + 4, 'x', { mono: true, size: 12, weight: 600, color: '#3a4aa8' });
+  tex(G[1][0], G[1][1] + 5, 'g_1', { fs: 12.5, mono: false });
+  tex(G[2][0], G[2][1] + 5, 'g_2', { fs: 12.5 });
+  tex(G.n[0], G.n[1] + 5, 'g_n', { fs: 12.5 });
+  tex(260, 218, '\\vdots', { fs: 13, color: '#8a8f9c' });
+  s.label(F[0], F[1] + 5, 'f', { mono: true, size: 12, weight: 600, color: '#3a4aa8' });
+  tex(F[0], F[1] - 40, 'f\\bigl(g_1(x),\\, \\ldots,\\, g_n(x)\\bigr)', { fs: 13.5 });
+
+  const AMBER = '#bf8700', GREEN = '#1a7f37', INK = '#3a4aa8';
+  const edgeList = [...Object.values(eXG), ...Object.values(eGF)];
+  const nodeList = [nX, nF, ...Object.values(nG)];
+  let timers = [];
+  const clr = () => { timers.forEach(clearTimeout); timers = []; };
+  function base() {
+    clr();
+    nodeList.forEach(n => { n.setAttribute('stroke', INK); n.setAttribute('stroke-width', 1.6); n.setAttribute('fill', '#fff'); });
+    nX.setAttribute('fill', '#dfe7fb');
+    edgeList.forEach(e => { e.setAttribute('stroke', 'rgba(58,74,168,.35)'); e.setAttribute('stroke-width', 1.4); });
+    document.querySelectorAll('.dv-mark').forEach(g => g.remove());
+  }
+  window.cfReset = base;
+
+  window.cfForward = function () {
+    base();
+    const T = (fn, i) => timers.push(setTimeout(fn, i * 460));
+    T(() => { nX.setAttribute('stroke', AMBER); nX.setAttribute('stroke-width', 2.6); }, 0);
+    T(() => {
+      Object.values(eXG).forEach(e => { e.setAttribute('stroke', AMBER); e.setAttribute('stroke-width', 2.2); });
+      Object.values(nG).forEach(n => { n.setAttribute('stroke', AMBER); n.setAttribute('stroke-width', 2.4); });
+    }, 1);
+    T(() => {
+      Object.values(eGF).forEach(e => { e.setAttribute('stroke', AMBER); e.setAttribute('stroke-width', 2.2); });
+      nF.setAttribute('stroke', AMBER); nF.setAttribute('stroke-width', 2.6);
+    }, 2);
+  };
+
+  window.cfBackward = function () {
+    base();
+    const T = (fn, i) => timers.push(setTimeout(fn, i * 560));
+    /* 1. 余切种子在 f */
+    T(() => {
+      nF.setAttribute('stroke', GREEN); nF.setAttribute('stroke-width', 2.5);
+      tex(F[0], F[1] + 46, '\\bar{f}', { color: GREEN, fs: 14, weight: 600, cls: 'dv-mark' });
+    }, 0);
+    /* 2. f 的 VJP 沿 n 条输出边各传回一份 ∂f/∂gᵢ · f̄ */
+    T(() => {
+      Object.values(eGF).forEach(e => { e.setAttribute('stroke', GREEN); e.setAttribute('stroke-width', 2.2); });
+      Object.values(nG).forEach(n => { n.setAttribute('stroke', GREEN); n.setAttribute('stroke-width', 2.4); });
+      tex(388, 52, '\\tfrac{\\partial f}{\\partial g_1}\\bar{f}', { color: GREEN, fs: 12, cls: 'dv-mark' });
+      tex(388, 146, '\\tfrac{\\partial f}{\\partial g_2}\\bar{f}', { color: GREEN, fs: 12, cls: 'dv-mark' });
+      tex(388, 288, '\\tfrac{\\partial f}{\\partial g_n}\\bar{f}', { color: GREEN, fs: 12, cls: 'dv-mark' });
+    }, 1);
+    /* 3. 各支路乘上自己的局部导数, 继续回传 */
+    T(() => {
+      Object.values(eXG).forEach(e => { e.setAttribute('stroke', GREEN); e.setAttribute('stroke-width', 2.2); });
+      tex(170, 108, "g_1'", { color: GREEN, fs: 12, cls: 'dv-mark' });
+      tex(170, 152, "g_2'", { color: GREEN, fs: 12, cls: 'dv-mark' });
+      tex(170, 232, "g_n'", { color: GREEN, fs: 12, cls: 'dv-mark' });
+    }, 2);
+    /* 4. x 收到全路径之和 (全微分) */
+    T(() => {
+      const g = document.createElementNS(NS, 'g'); g.setAttribute('class', 'dv-mark'); svg.appendChild(g);
+      const ring = document.createElementNS(NS, 'circle');
+      ring.setAttribute('cx', 148); ring.setAttribute('cy', 168); ring.setAttribute('r', 11);
+      ring.setAttribute('fill', '#fff'); ring.setAttribute('stroke', GREEN); ring.setAttribute('stroke-width', 1.6);
+      const h = document.createElementNS(NS, 'path');
+      h.setAttribute('d', 'M143 168 L153 168 M148 163 L148 173');
+      h.setAttribute('stroke', GREEN); h.setAttribute('stroke-width', 1.6); h.setAttribute('stroke-linecap', 'round');
+      g.appendChild(ring); g.appendChild(h);
+      nX.setAttribute('stroke', GREEN); nX.setAttribute('stroke-width', 2.5); nX.setAttribute('fill', 'rgba(26,127,55,.14)');
+      tex(150, 62, '\\bar{x} = \\sum_{i=1}^{n} \\tfrac{\\partial f}{\\partial g_i}\\, g_i\'\\, \\bar{f}', { color: GREEN, fs: 14, weight: 600, cls: 'dv-mark' });
+    }, 3);
+  };
+  base();
+});
+</script>
+</body>
+</html>

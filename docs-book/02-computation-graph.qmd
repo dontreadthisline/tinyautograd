@@ -2,19 +2,11 @@
 
 第 1 章把网络看作抽象的复合函数，但式 (1.4) 说"沿前向的逆序"——逆序存在的前提是：**顺序被记住了**。抽象函数没有顺序：它是无限的，每个可能的输入都对应一次求值。而计算总是发生在具体输入上，一次执行展开成一串具体的基本操作——这份展开记录就是**计算图**（Wengert list）。函数与图的关系是 1:N：同一个 $f$ 喂不同输入得到不同的图；控制流在展开时被具体化，共享子表达式自动成为 DAG。
 
-本章站在**图视角**：先看图如何在两个方向上生长，再看它长在什么数据结构上。
+本章回答两件事：等价转换落在什么数据结构上（图长在值上），以及这个结构如何藏在函数定义之下（用户从不"画图"）。
 
 ::: {.callout-important title="本章问题"}
 第 1 章的式 (1.4) 要求沿前向的逆序转交余切。这个转交发生在什么结构上？反向传播与前向计算是两台机器，还是同一件事的两个方向？
 :::
-
-## 图的两个生长方向
-
-先给两张图命名。**值图**：Tensor 通过 `inputs`/`op` 的引用构成的结构，记录值从哪里来——前向每调用一次算子，值图就长出一层，新节点持有算子与父节点。**梯度图**：反向传播生长的结构——式 (1.4) 的每一拍 VJP 是一次算子调用，产生的中间梯度是惰性数组；余切的每次累加 $\oplus$ 是一次 `add`，同样只登记、不计算。
-
-于是前向与反向不是两台机器，而是同一件事在两个方向上的重复：**调用算子，图生长**。前向长值图，反向长梯度图，两张图通过 VJP 咬合——VJP 以前向值为实参，梯度图的每个节点挂在值图的对应节点上。参数更新 $v - \mathrm{lr} \cdot g$ 也是算子调用，继续建图（第 3 章展开它的完整含义）。
-
-两张图都只生长、不计算。计算发生在唯一的出口：`eval(loss, grads)` 一次调用，两张图同批物化——loss 是值图的根，grads 是梯度图的叶。**一体两面**：把它写成一次调用之所以合法，正因为它们从来不是两次计算。出口的完整语义（谁触发、何时结算、执行由谁承担）是第 5 章的主题；本章先看图本身。
 
 ## 图长在值上
 
@@ -69,140 +61,62 @@ class Tensor:
 
 值中心的关键收益是**可内省性**：任何一个中间 Tensor，你都能直接问它的形状（第 1 章的 $\bar v$ 是向量——`shape`/`dtype` 让余切的构造类型正确）、它的父节点、它的算子。教学框架尤其需要这一点——图不是黑盒。
 
+## 图藏在函数定义之下
+
+结构定了，等价转换的操作面是什么？用户从头到尾只做一件事——**写普通的函数复合**：
+
+```python
+def loss_fn(v):
+    h1 = ops.relu(v @ W1 + b1)
+    return ops.sum((h1 @ W2 + b2 - y) ** 2)
+```
+
+没有 Node、没有 add_edge、没有 trace 上下文。图的构建完全藏在算子调用之下：`@`、`+`、`ops.relu` 的每一次求值都经过 `lift` 的包装——wrap 输入、登记 `Op`、建立反向边（第 3 章拆开这台机器）。于是：
+
+**函数体是图的模板，调用是实例化**。`loss_fn` 定义的是一族图的形状；一次 `loss_fn(v0)` 在具体输入上展开一张 Wengert list——这正是函数 : 图 $= 1:N$ 的操作含义。同一个函数嗂不同输入、不同 batch 形状，得到不同的图实例。
+
+**控制流在实例化时具体化**。函数体里的 `if`、`while` 是 Python 的，图不知道它们的存在——每次调用走到的分支不同，展开的图就不同。图不需要"支持控制流"，因为它只在调用之后存在。
+
+**共享子表达式自动成为 DAG**。`s = ops.exp(x); z = s * s` 里 `s` 是同一个 Tensor 对象，两条边指向同一节点——用户不写"复用"，复用是值语义的自然结果（汇聚现象在结构上免费出现，下一节展开它的反向后果）。
+
+这三条合起来就是第 3 章 DSL 的预告：**DSL 的语义 = "解释到图"**。用户书写的 Python 子集（函数复合 + 算子词汇表）被逐调用翻译成图——语言在明处，图在暗处。原则 B（图不可见）不是隐藏实现细节的权宜，而是这条等价转换的必然形态：图是函数调用的私产物，API 上自然没有它的位置。
+
 ## 一张真实的图
 
-下面这张计算图由页面脚本实时生成，与第 1 章的七算子表同构——两层 MLP 加交叉熵，softmax 在链条末端。**蓝框是叶子**（参数与数据，`op=None`），**空心圆是算子节点**；灰化的 $y$ 是标签，不参与回传。*前向*按调用顺序建图（琥珀色光环游走），*反向*从 $L$ 出发逆序回流（绿色，即本章梯度图的生长过程，梯度到达参数叶时弹出标记）：
+下面这张计算图与第 1 章的七算子表同构——两层 MLP 加交叉熵，softmax 在链条末端。**蓝框是叶子**（参数与数据，`op=None`），**空心圆是算子节点**；灰化的 $y$ 是标签，不参与回传。*前向*按调用顺序建图（琥珀色光环游走），*反向*从 $L$ 出发逆序回流（绿色，梯度到达参数叶时弹出 $\nabla$ 标记）：
 
-<div class="comp-graph" id="mlp-graph">
+<iframe class="comp-graph" src="resources/mlp-graph.html" title="两层 MLP 计算图: 前向建图与反向余切回流" loading="lazy" scrolling="no"></iframe>
 <style>
-.comp-graph { margin: 1.2em 0; overflow-x: auto; }
-.comp-graph svg { display: block; margin: 0 auto; max-width: 100%; }
-.comp-graph .cg-bar { display: flex; gap: .5em; margin-bottom: .6em; }
-.comp-graph .cg-bar button { font: 500 .85em -apple-system,"PingFang SC",sans-serif; padding: .32em 1em;
-  border: 1px solid #ddd8ce; border-radius: 6px; background: #fff; color: #24292f; cursor: pointer; }
-.comp-graph .cg-bar button:hover { border-color: #0969da; color: #0969da; }
+.comp-graph { width: 100%; max-width: 900px; height: 260px; border: 0; display: block; margin: 1.2em auto; }
 </style>
-<div class="cg-bar"><button onclick="cgForward()">前向 (建图)</button><button onclick="cgBackward()">反向 (余切回流)</button><button onclick="cgReset()">复位</button></div>
-<svg id="cgsvg" viewBox="0 0 880 180" width="880" height="180"></svg>
-<script>
-window.addEventListener('load', function () {
-  if (typeof Sketch === 'undefined') return;
-  /* ---- 结构: 与落地页计算图逐字一致 ---- */
-  const svg = document.getElementById('cgsvg');
-  const s = Sketch(svg);
-  const Y1 = 52, Y2 = 152, R = 22, RL = 15;
-  const pos = { x: [26, Y1], mm1: [140, Y1], z1: [254, Y1], h: [368, Y1],
-                mm2: [482, Y1], o: [596, Y1], sm: [698, Y1], L: [800, Y1],
-                W1: [140, Y2], b1: [254, Y2], W2: [482, Y2], b2: [596, Y2], y: [800, Y2] };
-  const isLeaf = id => ['x','W1','b1','W2','b2','y'].includes(id);
-  const EDGES = [['x','mm1'],['W1','mm1'],['mm1','z1'],['b1','z1'],['z1','h'],['h','mm2'],
-                 ['W2','mm2'],['mm2','o'],['b2','o'],['o','sm'],['sm','L'],['y','L']];
-  const edges = {};
-  EDGES.forEach(([a, b]) => {
-    const [ax, ay] = pos[a], [bx, by] = pos[b];
-    const ra = isLeaf(a) ? RL : R, rb = isLeaf(b) ? RL : R;
-    let d;
-    if (by > ay) { d = `M${ax + ra} ${ay} C ${ax + 44} ${ay}, ${bx - 44} ${by}, ${bx - rb} ${by}`; }
-    else { d = `M${ax} ${ay + ra} C ${ax + 5} ${ay + 40}, ${bx - 5} ${by - 40}, ${bx} ${by - rb}`; }
-    edges[a + '-' + b] = s.path(d, { stroke: 'rgba(58,74,168,.35)', width: 1.4, arrow: true });
-  });
-  const OPS = { mm1: 'matmul', z1: 'add', h: 'relu', mm2: 'matmul', o: 'add', sm: 'softmax', L: 'CE' };
-  const META = { mm1: '[x,W1]', z1: '[mm1,b1]', h: 'max(z1,0)', mm2: '[h,W2]', o: '[mm2,b2]', sm: 'p', L: '-<y,log p>' };
-  const nodes = {};
-  Object.keys(pos).forEach(id => {
-    const [x, yy] = pos[id];
-    if (isLeaf(id)) {
-      nodes[id] = s.node(x, yy, { r: RL, fill: id === 'y' ? '#c9cbd6' : '#dfe7fb' });
-      s.label(x, yy + 4, id, { mono: true, size: 10.5, weight: 600, color: id === 'y' ? '#8a8f9c' : '#3a4aa8' });
-    } else {
-      nodes[id] = s.node(x, yy, { r: R });
-      s.label(x, yy + 5, OPS[id], { mono: true, size: 11, weight: 600, color: '#2c3a8c' });
-      s.label(x, yy - R - 8, META[id], { mono: true, size: 8.5, color: '#6b7280' });
-    }
-  });
-  /* ---- 动效: 前向琥珀游走 / 反向绿色回流 + 梯度标记 ---- */
-  const fwdOrder = ['x','W1','b1','W2','b2','y','mm1','z1','h','mm2','o','sm','L'];
-  const backNodes = ['L','sm','o','b2','mm2','W2','h','z1','b1','mm1','W1','x'];
-  const backEdges = [['L','sm'],['sm','o'],['o','b2'],['o','mm2'],['mm2','W2'],['mm2','h'],['h','z1'],
-                     ['z1','b1'],['z1','mm1'],['mm1','W1'],['mm1','x']];
-  const GRAD = ['W1','b1','W2','b2','x'];
-  const AMBER = '#bf8700', GREEN = '#1a7f37', INK = '#3a4aa8';
-  const leafFill = id => id === 'y' ? '#c9cbd6' : '#dfe7fb';
-  let timers = [];
-  const clr = () => { timers.forEach(clearTimeout); timers = []; };
-  function base(n, id) { n.setAttribute('stroke', INK); n.setAttribute('stroke-width', 1.6); n.setAttribute('fill', isLeaf(id) ? leafFill(id) : '#fff'); }
-  window.cgReset = function () {
-    clr();
-    Object.entries(nodes).forEach(([id, n]) => base(n, id));
-    Object.values(edges).forEach(e => { e.setAttribute('stroke', 'rgba(58,74,168,.35)'); e.setAttribute('stroke-width', 1.4); });
-    document.querySelectorAll('#cgsvg .cg-grad').forEach(g => g.remove());
-  };
-  window.cgForward = function () {
-    cgReset();
-    fwdOrder.forEach((id, i) => timers.push(setTimeout(function () {
-      const n = nodes[id]; n.setAttribute('stroke', AMBER); n.setAttribute('stroke-width', 2.6);
-      timers.push(setTimeout(function () { n.setAttribute('stroke', GREEN); n.setAttribute('stroke-width', 2); }, 300));
-      EDGES.forEach(([a, b]) => { if (b === id) { const e = edges[a + '-' + b]; e.setAttribute('stroke', AMBER); e.setAttribute('stroke-width', 2.2); } });
-    }, i * 230)));
-  };
-  window.cgBackward = function () {
-    cgReset();
-    backNodes.forEach((id, i) => timers.push(setTimeout(function () {
-      const n = nodes[id]; n.setAttribute('stroke', GREEN); n.setAttribute('stroke-width', 2.4);
-      if (GRAD.includes(id)) n.setAttribute('fill', 'rgba(26,127,55,.14)');
-      backEdges.forEach(([a, b]) => { if (a === id) { const e = edges[b + '-' + a] || edges[a + '-' + b]; if (e) { e.setAttribute('stroke', GREEN); e.setAttribute('stroke-width', 2.2); } } });
-      if (GRAD.includes(id)) {
-        const x = parseFloat(nodes[id].getAttribute('cx'));
-        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g'); g.setAttribute('class', 'cg-grad');
-        svg.appendChild(g);
-        Sketch(g).label(x, Y2 - 26, '\u2207' + id, { mono: true, size: 11, weight: 600, color: GREEN });
-      }
-    }, 300 + i * 230)));
-  };
-});
-</script>
-</div>
 
 ## 从链到图
 
-第 1 章的式 (1.4) 在一条链上成立：每个节点恰有一个下游，余切逐拍向前转交。值图是 DAG，从链推广到图时会冒出三个新现象——它们是 Algorithm 2.1 里三个步骤的来源。
+第 1 章的式 (1.4) 在一条链上成立：每个节点恰有一个下游，余切逐拍向前转交。值图是 DAG，从链推广到图时会冒出三个新现象——它们是第 5 章反向引擎三个步骤的来源。
 
-**汇聚**。一个值被多个下游使用时，每条路径都会传回一份余切，链式法则要求全路径求和。最小的例子是 $f(x) = x \cdot x$：值图中 $x$ 有两条到 $f$ 的路径，反向时两拍 VJP 各传回一份 $\bar x$，相加得 $2x\,\bar f$——导数 $2x$ 不是哪一个 VJP 算出来的，是两份余切 $\oplus$ 的和。
+**汇聚**。一个值被多个下游使用时，每条路径都会传回一份余切——这不是实现选择，是**全微分公式**的直接要求。对 $f\bigl(g_1(x), g_2(x), \ldots, g_n(x)\bigr)$（同一个 $x$ 经 $n$ 条支路进入 $f$），全微分给出
+
+$$
+\frac{df}{dx} \;=\; \sum_{i=1}^{n} \frac{\partial f}{\partial g_i} \cdot \frac{dg_i}{dx}
+$$
+
+反向引擎逐项实现这个和式：处理 $f$ 时，VJP 沿每条输出边各传回一份 $\frac{\partial f}{\partial g_i}\bar{f}$；各支路再乘上自己的局部导数继续回传；$x$ 处 $\oplus$ 把 $n$ 份加起来。导数不是哪一个 VJP 算出来的，是全部路径贡献的和。最小的例子 $f = x \cdot x$ 只是 $n=2$、$g_1 = g_2 = \mathrm{id}$ 的特例（两份 $x\bar{f}$ 相加得 $2x\bar{f}$）：
+
+<iframe class="confluence-fig" src="resources/confluence-graph.html" title="汇聚: 同一 x 的 n 条支路各传回一份余切, ⊙ 相加 (全微分)" loading="lazy" scrolling="no"></iframe>
+<style>
+.confluence-fig { width: 100%; max-width: 680px; height: 420px; border: 0; display: block; margin: 1.2em auto; }
+</style>
 
 **无关分支**。对 $L = f(x) + g(y)$ 中的 $x$ 求导时，$g$ 整个分支与答案无关，不该生长——这就是可达集 $R$ 的剪枝：反向 DFS 只保留能到达求导目标的节点。
 
-**多输出**。一个算子产出多个值（如 `split`）时，每个输出各自从下游收余切；某一输出的余切缺席时按零计——兄弟补零保证"每个输出独立贡献自己的部分导数"，拼起来恰是该算子完整的 VJP。
+**多输出**。一个算子产出多个值（如 `split`）时，前向图上是一个节点扇出多条输出边——多个输出 Tensor 共享同一个 `op`，以 `index` 区分位次。反向时每个输出各自从下游收余切；某一输出的余切缺席时按零计——$\mathrm{VJP}_{\mathrm{split}}$ 的余切输入必须与输出序列对齐，拼接成 $(\bar{a}, \mathbf{0})$ 这样的完整序列，才能得到输入侧的 $\bar{v}$：
 
-三个现象都不改变第 1 章的骨架：余切仍然沿逆拓扑序逐拍转交，只是转交时多了求和、剪枝、补零三条规则。
+<iframe class="split-fig" src="resources/split-graph.html" title="多输出: 前向一入多出, 反向余切拼接" loading="lazy" scrolling="no"></iframe>
+<style>
+.split-fig { width: 100%; max-width: 700px; height: 415px; border: 0; display: block; margin: 1.2em auto; }
+</style>
 
-## 梯度图的生长
-
-Algorithm 2.1 把式 (1.4) 与上面三条规则一起形式化：一次逆拓扑遍历：先从输出反向 DFS 出拓扑序与可达集（剪掉与求导目标无关的分支），再沿逆序把余切逐层转交、聚合，见 @alg-backward。
-
-::: {#alg-backward}
-### 余切回传
-
-输入　图 $G$，输出节点 $\mathrm{out}$，初始余切 $v$，求导目标集 $L \subseteq V$。\
-输出　各目标的余切 $\{\, t \mapsto C(t) : t \in L \,\}$。
-
-$$
-\begin{array}{rll}
-1 & (t_k, \ldots, t_1) \leftarrow \text{逆拓扑序}(G) & \textcolor{#8a8f98}{//\; t_k = \mathrm{out}} \\
-2 & R \leftarrow \{\, u \in V : u \text{ 沿 } E \text{ 反向可达 } L \,\} & \textcolor{#8a8f98}{//\; \text{剪掉无关分支}} \\
-3 & C \leftarrow \{\, \mathrm{out} \mapsto v \,\} & \textcolor{#8a8f98}{//\; C : V \rightharpoonup \text{余切}} \\
-4 & \mathbf{for}\; i = k \;\mathbf{downto}\; 1 \;\mathbf{do} & \\
-5 & \quad t \leftarrow t_i & \\
-6 & \quad \mathbf{if}\; t_{\mathrm{op}} = \varnothing \;\vee\; t \notin \operatorname{dom}(C) \;\mathbf{then\; continue} & \\
-7 & \quad c \leftarrow (0, \ldots, 0,\, C(t),\, 0, \ldots, 0) & \textcolor{#8a8f98}{//\; \text{兄弟输出补零}} \\
-8 & \quad (g_p)_{p \in t_{\mathrm{in}}} \leftarrow \mathrm{VJP}_{t_{\mathrm{op}}}(\mathrm{val}(t_{\mathrm{in}}),\, c) & \\
-9 & \quad \mathbf{for}\; p \in t_{\mathrm{in}} \;\mathbf{do} & \\
-10 & \quad\quad \mathbf{if}\; p \in R \;\mathbf{then}\; C(p) \leftarrow C(p) + g_p & \textcolor{#8a8f98}{//\; \text{全路径求和}} \\
-11 & \mathbf{return}\; \{\, t \mapsto C(t) : t \in L \,\}
-\end{array}
-$$
-:::
-
-三个要点标在行尾注记里：补零处理多输出算子共享同一个 `op` 的场景，每个输出独立贡献余切；⊕ 聚合是链式法则"值被多处使用则全路径求和"的直接实现；`reach` 让与梯度无关的分支整棵跳过。
+三个现象都不改变第 1 章的骨架：余切仍然沿逆拓扑序逐拍转交，只是转交时多了求和、剪枝、补零三条规则——它们如何进入算法，第 5 章把前向与反向两台引擎一起形式化。
 
 ## 图的弱持有形态
 
@@ -221,6 +135,6 @@ MLX 的 `mx.array` 本身就是"C++ 层的值中心表示"——惰性、带 pri
 
 ::: {.callout-caution title="练习"}
 1. 画出的计算图：$y = \operatorname{sum}(x \cdot \operatorname{detach}(x))$，标出每个 Tensor 的 `inputs`/`op`，用 `reach` 集合解释为什么 $\partial y / \partial x = \operatorname{detach}(x)$ 而不是 $2x$。
-2. `_backward` 的 DFS 同时算 `order` 与 `reach` 两次遍历。说明：对无环图，`order` 是拓扑序；若图有环（`Tensor` 构造时手工注入环），这段代码会怎样？
-3. 对比：JAX 的 `grad` 每次重新追踪 `f`，tinyautograd 的 `value_and_grad` 也是每次重新调用 `f`（见第 4 章）。既然都要重放，值中心表示里"图随值存活"还提供了什么重放不可得的能力？提示：`vjp`（原子层）对**已存在的**输出张量反传。
+2. 写一个含 `if` 的 loss 函数，两个不同输入走不同分支。分别画出两次调用展开的图，验证"控制流在实例化时具体化"。
+3. `s = ops.exp(x); z = s * s` 与 `z = ops.exp(x) * ops.exp(x)` 展开的图有何不同？从节点数与反向计算量两方面比较，解释"共享子表达式自动成为 DAG"为什么是值语义的自然结果。
 :::

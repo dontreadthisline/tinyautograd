@@ -4,6 +4,8 @@ from typing import Callable, NamedTuple
 
 import mlx.core as mx
 
+from tinyautograd import ops
+
 __all__ = ["Tensor", "Op", "tensor"]
 
 type Array = mx.array
@@ -11,6 +13,14 @@ type TensorLike = Tensor | Array | int | float | bool | list | tuple
 type ArrayFn = Callable[..., Array]
 type MultiArrayFn = Callable[..., list[Array] | tuple[Array, ...]]
 type TensorFn = Callable[..., Tensor]
+
+mx_vjp = mx.vjp
+mx_eval = mx.eval
+mx_zeros_like = mx.zeros_like
+mx_ones_like = mx.ones_like
+
+# 图构成开关: no_grad 上下文置位, lift 构造时读取
+_no_grad = False
 
 
 class Op(NamedTuple):
@@ -25,9 +35,7 @@ class Tensor:
     inputs: tuple[Tensor, ...]
     op: Op | None
     index: int
-    _computed: (
-        bool  # 求值标记: 源/no_grad 构造即 True, lift 建边 False, eval 重放后 True
-    )
+    _computed: bool
 
     def __init__(
         self,
@@ -63,19 +71,16 @@ class Tensor:
 
     @property
     def T(self) -> Tensor:
-        from tinyautograd.ops import transpose
-
-        return transpose(self)
+        return ops.transpose(self)
 
     def _ensure(self) -> Array:
-        """值读统一门: 未求值则对该子图前向 (隐式求值门, 与显式 eval 同一调度)。"""
-        if not self._computed:
-            from tinyautograd.runtime import eval as _eval
+        """值读统一门:未求值则对该子图前向求值"""
+        from tinyautograd.runtime import eval as _eval
 
+        if not self._computed:
             _eval(self)
         return self._array
 
-    # ---- DSL 出口: 读取触发求值 ----
     def item(self) -> int | float | bool:
         return self._ensure().item()
 
@@ -91,10 +96,8 @@ class Tensor:
         return len(self._array)
 
     def _bin(self, name: str, other: TensorLike, reflect: bool = False) -> Tensor:
-        from tinyautograd import ops
-
         fn = getattr(ops, name)
-        a, b = wrap(other), self
+        a, b = _wrap(other), self
         return fn(a, b) if reflect else fn(self, a)
 
     def __add__(self, other: TensorLike) -> Tensor:
@@ -128,30 +131,20 @@ class Tensor:
         return self._bin("pow", other)
 
     def __neg__(self) -> Tensor:
-        from tinyautograd import ops
-
         return ops.neg(self)
 
     def __getitem__(
         self, idx: int | slice | tuple[int | slice | None, ...] | None
     ) -> Tensor:
-        from tinyautograd.ops import lift
-
-        return lift(lambda a, _idx=idx: a[_idx])(self)
+        return ops.lift(lambda a, _idx=idx: a[_idx])(self)
 
 
 def tensor(value: TensorLike) -> Tensor:
-    """通用源构造器: 把标量/序列/mx 数组包装为叶子 Tensor。
-
-    公开的源入口只此一个 —— inputs/op 参数是框架内部的, 用户无法经此建边。
-    已是 Tensor 的输入原样返回 (与 wrap 同语义: 值就是它自己)。
-    """
-    if isinstance(value, Tensor):
-        return value
-    return Tensor(value)
+    """通用源构造器: 把标量/序列/mx 数组包装为叶子 Tensor。"""
+    return _wrap(value)
 
 
-def wrap(value: TensorLike) -> Tensor:
+def _wrap(value: TensorLike) -> Tensor:
     if isinstance(value, Tensor):
         return value
     return Tensor(value)
